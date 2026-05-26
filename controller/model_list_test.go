@@ -26,9 +26,51 @@ type listModelsResponse struct {
 	Object  string             `json:"object"`
 }
 
+type controllerDBTestState struct {
+	db              *gorm.DB
+	logDB           *gorm.DB
+	usingSQLite     bool
+	usingMySQL      bool
+	usingPostgreSQL bool
+	redisEnabled    bool
+}
+
+func saveControllerDBTestState() controllerDBTestState {
+	return controllerDBTestState{
+		db:              model.DB,
+		logDB:           model.LOG_DB,
+		usingSQLite:     common.UsingSQLite,
+		usingMySQL:      common.UsingMySQL,
+		usingPostgreSQL: common.UsingPostgreSQL,
+		redisEnabled:    common.RedisEnabled,
+	}
+}
+
+func (state controllerDBTestState) restore() {
+	model.DB = state.db
+	model.LOG_DB = state.logDB
+	common.UsingSQLite = state.usingSQLite
+	common.UsingMySQL = state.usingMySQL
+	common.UsingPostgreSQL = state.usingPostgreSQL
+	common.RedisEnabled = state.redisEnabled
+}
+
+func closeControllerTestDB(t *testing.T, db *gorm.DB) {
+	t.Helper()
+
+	if db == nil {
+		return
+	}
+	sqlDB, err := db.DB()
+	if err == nil {
+		_ = sqlDB.Close()
+	}
+}
+
 func setupModelListControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
+	originalState := saveControllerDBTestState()
 	initModelListColumnNames(t)
 
 	gin.SetMode(gin.TestMode)
@@ -44,12 +86,12 @@ func setupModelListControllerTestDB(t *testing.T) *gorm.DB {
 	model.LOG_DB = db
 
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}))
+	model.InvalidatePricingCache()
 
 	t.Cleanup(func() {
-		sqlDB, err := db.DB()
-		if err == nil {
-			_ = sqlDB.Close()
-		}
+		model.InvalidatePricingCache()
+		originalState.restore()
+		closeControllerTestDB(t, db)
 	})
 
 	return db
@@ -60,6 +102,7 @@ func initModelListColumnNames(t *testing.T) {
 
 	originalIsMasterNode := common.IsMasterNode
 	originalSQLitePath := common.SQLitePath
+	originalState := saveControllerDBTestState()
 	originalUsingSQLite := common.UsingSQLite
 	originalUsingMySQL := common.UsingMySQL
 	originalUsingPostgreSQL := common.UsingPostgreSQL
@@ -67,6 +110,7 @@ func initModelListColumnNames(t *testing.T) {
 	defer func() {
 		common.IsMasterNode = originalIsMasterNode
 		common.SQLitePath = originalSQLitePath
+		originalState.restore()
 		common.UsingSQLite = originalUsingSQLite
 		common.UsingMySQL = originalUsingMySQL
 		common.UsingPostgreSQL = originalUsingPostgreSQL
@@ -86,10 +130,7 @@ func initModelListColumnNames(t *testing.T) {
 
 	require.NoError(t, model.InitDB())
 	if model.DB != nil {
-		sqlDB, err := model.DB.DB()
-		if err == nil {
-			_ = sqlDB.Close()
-		}
+		closeControllerTestDB(t, model.DB)
 	}
 }
 
@@ -220,10 +261,12 @@ func TestListModelsTokenLimitIncludesTieredBillingModel(t *testing.T) {
 		"zz-token-tiered-visible-model":    `tier("base", p * 1 + c * 2)`,
 		"zz-token-tiered-empty-expr-model": "",
 	})
+	setupModelListControllerTestDB(t)
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
 	common.SetContextKey(ctx, constant.ContextKeyTokenModelLimitEnabled, true)
 	common.SetContextKey(ctx, constant.ContextKeyTokenModelLimit, map[string]bool{
 		"zz-token-tiered-visible-model":      true,
