@@ -568,16 +568,7 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 		if err != nil {
 			return err
 		}
-		if err := ApplyAffiliateRewardOnTopUpSuccess(tx, AffiliateRewardTopUpEvent{
-			InviteeId:           order.UserId,
-			TopupId:             topup.Id,
-			TradeNo:             order.TradeNo,
-			BasisQuota:          basisQuota,
-			BasisMoney:          order.Money,
-			TriggerSource:       order.PaymentProvider,
-			CompletedAt:         order.CompleteTime,
-			IncludeSubscription: true,
-		}); err != nil {
+		if err := ApplyAffiliateRewardForTopUpTx(tx, topup, basisQuota, order.PaymentProvider, true); err != nil {
 			return err
 		}
 		logUserId = order.UserId

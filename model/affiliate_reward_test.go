@@ -81,6 +81,13 @@ func insertAffiliateTopUpForTest(t *testing.T, tradeNo string, userId int, amoun
 	return topup
 }
 
+func markAffiliateTopUpSuccessForTest(t *testing.T, topup *TopUp, completeTime int64) {
+	t.Helper()
+	topup.Status = common.TopUpStatusSuccess
+	topup.CompleteTime = completeTime
+	require.NoError(t, DB.Save(topup).Error)
+}
+
 func getAffiliateRewardLogCountForTest(t *testing.T) int64 {
 	t.Helper()
 	var count int64
@@ -95,7 +102,7 @@ func getAffiliateUserForTest(t *testing.T, id int) User {
 	return user
 }
 
-func TestUserInsertBindsInviterWithoutRegistrationReward(t *testing.T) {
+func TestUserInsertBindsInviterAndGrantsRegistrationReward(t *testing.T) {
 	truncateTables(t)
 	configureAffiliateRewardTest(t, nil)
 
@@ -125,9 +132,9 @@ func TestUserInsertBindsInviterWithoutRegistrationReward(t *testing.T) {
 	reloadedInvitee := getAffiliateUserForTest(t, invitee.Id)
 	assert.Equal(t, inviter.Id, reloadedInvitee.InviterId)
 	assert.Equal(t, 50, reloadedInvitee.Quota)
-	assert.Equal(t, 0, reloadedInviter.AffQuota)
-	assert.Equal(t, 0, reloadedInviter.AffHistoryQuota)
-	assert.Equal(t, 0, reloadedInviter.AffCount)
+	assert.Equal(t, 900, reloadedInviter.AffQuota)
+	assert.Equal(t, 900, reloadedInviter.AffHistoryQuota)
+	assert.Equal(t, 1, reloadedInviter.AffCount)
 	assert.EqualValues(t, 0, getAffiliateRewardLogCountForTest(t))
 }
 
@@ -142,6 +149,8 @@ func TestApplyAffiliateRewardFirstTopUpPendingSettleTransferAndIdempotency(t *te
 	inviter := insertAffiliateUserForTest(t, 1101, "inviter_first", 0, now-10*86400)
 	invitee := insertAffiliateUserForTest(t, 1102, "invitee_first", inviter.Id, now-10*86400)
 	topup := insertAffiliateTopUpForTest(t, "first-topup-order", invitee.Id, 10, 10, PaymentProviderEpay)
+	completedAt := now - 2*86400
+	markAffiliateTopUpSuccessForTest(t, topup, completedAt)
 	event := AffiliateRewardTopUpEvent{
 		InviteeId:     invitee.Id,
 		TopupId:       topup.Id,
@@ -149,7 +158,7 @@ func TestApplyAffiliateRewardFirstTopUpPendingSettleTransferAndIdempotency(t *te
 		BasisQuota:    1000,
 		BasisMoney:    10,
 		TriggerSource: PaymentProviderEpay,
-		CompletedAt:   now - 2*86400,
+		CompletedAt:   completedAt,
 	}
 
 	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
@@ -163,7 +172,7 @@ func TestApplyAffiliateRewardFirstTopUpPendingSettleTransferAndIdempotency(t *te
 	reloadedInviter := getAffiliateUserForTest(t, inviter.Id)
 	assert.Equal(t, 0, reloadedInviter.AffQuota)
 	assert.Equal(t, 100, reloadedInviter.AffHistoryQuota)
-	assert.Equal(t, 1, reloadedInviter.AffCount)
+	assert.Equal(t, 0, reloadedInviter.AffCount)
 
 	var reward AffiliateRewardLog
 	require.NoError(t, DB.Where("reward_key = ?", fmt.Sprintf("first:%d", invitee.Id)).First(&reward).Error)
@@ -182,6 +191,7 @@ func TestApplyAffiliateRewardFirstTopUpPendingSettleTransferAndIdempotency(t *te
 	assert.Equal(t, 100, reloadedInviter.Quota)
 	require.NoError(t, DB.First(&reward, reward.Id).Error)
 	assert.Equal(t, AffiliateRewardStatusTransferred, reward.Status)
+	assert.Equal(t, 100, reward.TransferredQuota)
 }
 
 func TestApplyAffiliateRewardRecurringLimitsThresholdCapsAndSelfInvite(t *testing.T) {
@@ -218,7 +228,7 @@ func TestApplyAffiliateRewardRecurringLimitsThresholdCapsAndSelfInvite(t *testin
 	reloadedInviter := getAffiliateUserForTest(t, inviter.Id)
 	assert.Equal(t, 50, reloadedInviter.AffQuota)
 	assert.Equal(t, 50, reloadedInviter.AffHistoryQuota)
-	assert.Equal(t, 1, reloadedInviter.AffCount)
+	assert.Equal(t, 0, reloadedInviter.AffCount)
 	assert.EqualValues(t, 2, getAffiliateRewardLogCountForTest(t))
 
 	expiredInvitee := insertAffiliateUserForTest(t, 1203, "invitee_expired", inviter.Id, now-10*86400)
@@ -244,6 +254,142 @@ func TestApplyAffiliateRewardRecurringLimitsThresholdCapsAndSelfInvite(t *testin
 	}))
 
 	assert.EqualValues(t, 2, getAffiliateRewardLogCountForTest(t))
+}
+
+func TestTransferAffiliateRewardPartiallyConsumesLedger(t *testing.T) {
+	truncateTables(t)
+	configureAffiliateRewardTest(t, nil)
+	common.QuotaPerUnit = 1
+
+	now := common.GetTimestamp()
+	inviter := insertAffiliateUserForTest(t, 1251, "inviter_partial", 0, now)
+	invitee := insertAffiliateUserForTest(t, 1252, "invitee_partial", inviter.Id, now)
+	inviter.AffQuota = 100
+	inviter.AffHistoryQuota = 100
+	require.NoError(t, DB.Save(inviter).Error)
+
+	reward := &AffiliateRewardLog{
+		RewardKey:   "partial-transfer",
+		InviterId:   inviter.Id,
+		InviteeId:   invitee.Id,
+		TradeNo:     "partial-transfer-order",
+		TriggerType: AffiliateRewardTriggerRecurringTopup,
+		BasisQuota:  1000,
+		BasisMoney:  10,
+		RewardRate:  0.1,
+		RewardQuota: 100,
+		Status:      AffiliateRewardStatusAvailable,
+		EligibleAt:  now,
+		SettledAt:   now,
+	}
+	require.NoError(t, DB.Create(reward).Error)
+
+	reloadedInviter := getAffiliateUserForTest(t, inviter.Id)
+	require.NoError(t, reloadedInviter.TransferAffQuotaToQuota(40))
+	reloadedInviter = getAffiliateUserForTest(t, inviter.Id)
+	assert.Equal(t, 60, reloadedInviter.AffQuota)
+	assert.Equal(t, 40, reloadedInviter.Quota)
+	require.NoError(t, DB.First(reward, reward.Id).Error)
+	assert.Equal(t, AffiliateRewardStatusAvailable, reward.Status)
+	assert.Equal(t, 40, reward.TransferredQuota)
+
+	require.NoError(t, reloadedInviter.TransferAffQuotaToQuota(60))
+	reloadedInviter = getAffiliateUserForTest(t, inviter.Id)
+	assert.Equal(t, 0, reloadedInviter.AffQuota)
+	assert.Equal(t, 100, reloadedInviter.Quota)
+	require.NoError(t, DB.First(reward, reward.Id).Error)
+	assert.Equal(t, AffiliateRewardStatusTransferred, reward.Status)
+	assert.Equal(t, 100, reward.TransferredQuota)
+}
+
+func TestTransferAffiliateRewardAllowsLegacyInviteBalanceRemainder(t *testing.T) {
+	truncateTables(t)
+	configureAffiliateRewardTest(t, nil)
+	common.QuotaPerUnit = 1
+
+	now := common.GetTimestamp()
+	inviter := insertAffiliateUserForTest(t, 1261, "inviter_legacy_transfer", 0, now)
+	invitee := insertAffiliateUserForTest(t, 1262, "invitee_legacy_transfer", inviter.Id, now)
+	inviter.AffQuota = 100
+	inviter.AffHistoryQuota = 100
+	require.NoError(t, DB.Save(inviter).Error)
+
+	reward := &AffiliateRewardLog{
+		RewardKey:   "legacy-remainder",
+		InviterId:   inviter.Id,
+		InviteeId:   invitee.Id,
+		TradeNo:     "legacy-remainder-order",
+		TriggerType: AffiliateRewardTriggerFirstTopup,
+		BasisQuota:  400,
+		BasisMoney:  4,
+		RewardRate:  0.1,
+		RewardQuota: 40,
+		Status:      AffiliateRewardStatusAvailable,
+		EligibleAt:  now,
+		SettledAt:   now,
+	}
+	require.NoError(t, DB.Create(reward).Error)
+
+	reloadedInviter := getAffiliateUserForTest(t, inviter.Id)
+	require.NoError(t, reloadedInviter.TransferAffQuotaToQuota(100))
+
+	reloadedInviter = getAffiliateUserForTest(t, inviter.Id)
+	assert.Equal(t, 0, reloadedInviter.AffQuota)
+	assert.Equal(t, 100, reloadedInviter.Quota)
+	require.NoError(t, DB.First(reward, reward.Id).Error)
+	assert.Equal(t, AffiliateRewardStatusTransferred, reward.Status)
+	assert.Equal(t, 40, reward.TransferredQuota)
+	assert.EqualValues(t, 1, getAffiliateRewardLogCountForTest(t))
+}
+
+func TestFirstSuccessfulOrderBelowThresholdConsumesFirstRewardSemantics(t *testing.T) {
+	truncateTables(t)
+	configureAffiliateRewardTest(t, func(setting *operation_setting.AffiliateSetting) {
+		setting.MinTopupQuota = 100
+		setting.FirstRewardEnabled = true
+		setting.FirstRewardRate = 0.5
+		setting.RecurringRewardEnabled = true
+		setting.RecurringRewardRate = 0.1
+	})
+
+	now := common.GetTimestamp()
+	inviter := insertAffiliateUserForTest(t, 1271, "inviter_first_semantics", 0, now-86400)
+	invitee := insertAffiliateUserForTest(t, 1272, "invitee_first_semantics", inviter.Id, now-86400)
+	firstTopup := insertAffiliateTopUpForTest(t, "first-under-threshold", invitee.Id, 1, 1, PaymentProviderEpay)
+	secondTopup := insertAffiliateTopUpForTest(t, "second-recurring", invitee.Id, 2, 2, PaymentProviderEpay)
+	markAffiliateTopUpSuccessForTest(t, firstTopup, now)
+	markAffiliateTopUpSuccessForTest(t, secondTopup, now+1)
+
+	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+		return ApplyAffiliateRewardOnTopUpSuccess(tx, AffiliateRewardTopUpEvent{
+			InviteeId:     invitee.Id,
+			TopupId:       firstTopup.Id,
+			TradeNo:       firstTopup.TradeNo,
+			BasisQuota:    50,
+			BasisMoney:    firstTopup.Money,
+			TriggerSource: PaymentProviderEpay,
+			CompletedAt:   firstTopup.CompleteTime,
+		})
+	}))
+	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+		return ApplyAffiliateRewardOnTopUpSuccess(tx, AffiliateRewardTopUpEvent{
+			InviteeId:     invitee.Id,
+			TopupId:       secondTopup.Id,
+			TradeNo:       secondTopup.TradeNo,
+			BasisQuota:    200,
+			BasisMoney:    secondTopup.Money,
+			TriggerSource: PaymentProviderEpay,
+			CompletedAt:   secondTopup.CompleteTime,
+		})
+	}))
+
+	assert.EqualValues(t, 1, getAffiliateRewardLogCountForTest(t))
+	var reward AffiliateRewardLog
+	require.NoError(t, DB.Where("trade_no = ?", secondTopup.TradeNo).First(&reward).Error)
+	assert.Equal(t, AffiliateRewardTriggerRecurringTopup, reward.TriggerType)
+	assert.Equal(t, "recurring:"+secondTopup.TradeNo, reward.RewardKey)
+	assert.Equal(t, 20, reward.RewardQuota)
+	assert.Equal(t, 20, getAffiliateUserForTest(t, inviter.Id).AffQuota)
 }
 
 func TestManualCompleteTopUpAppliesAffiliateRewardOnce(t *testing.T) {

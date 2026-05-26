@@ -137,6 +137,10 @@ func UpdateOption(c *gin.Context) {
 	default:
 		option.Value = fmt.Sprintf("%v", option.Value)
 	}
+	if err := operation_setting.ValidateAffiliateSettingOption(option.Key, option.Value.(string)); err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
 	if operation_setting.WouldAffiliateSettingRequireCompliance(option.Key, option.Value.(string)) &&
 		!operation_setting.IsPaymentComplianceConfirmed() {
 		common.ApiErrorI18n(c, i18n.MsgPaymentComplianceRequired)

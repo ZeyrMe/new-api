@@ -82,6 +82,10 @@ function RewardRecordItem({ record }: { record: AffiliateRewardRecord }) {
   const statusConfig =
     rewardStatusConfig[record.status] || rewardStatusConfig.pending
   const triggerLabel = triggerLabels[record.trigger_type] || record.trigger_type
+  const remainingQuota = Math.max(
+    0,
+    record.reward_quota - (record.transferred_quota ?? 0)
+  )
 
   return (
     <div className='hover:bg-muted/50 rounded-lg border p-3 transition-colors sm:p-4'>
@@ -100,7 +104,7 @@ function RewardRecordItem({ record }: { record: AffiliateRewardRecord }) {
         />
       </div>
 
-      <div className='mt-3 grid grid-cols-2 gap-3 sm:mt-4 sm:grid-cols-4 sm:gap-4'>
+      <div className='mt-3 grid grid-cols-2 gap-3 sm:mt-4 sm:grid-cols-3 sm:gap-4 lg:grid-cols-5'>
         <div className='space-y-1'>
           <Label className='text-muted-foreground text-xs'>
             {t('Top-up quota')}
@@ -123,6 +127,20 @@ function RewardRecordItem({ record }: { record: AffiliateRewardRecord }) {
           </Label>
           <div className='text-success text-sm font-semibold'>
             {formatQuota(record.reward_quota)}
+          </div>
+        </div>
+        <div className='space-y-1'>
+          <Label className='text-muted-foreground text-xs'>
+            {t('Remaining quota')}
+          </Label>
+          <div
+            className={
+              remainingQuota > 0
+                ? 'text-success text-sm font-semibold'
+                : 'text-muted-foreground text-sm font-semibold'
+            }
+          >
+            {formatQuota(remainingQuota)}
           </div>
         </div>
         <div className='space-y-1'>

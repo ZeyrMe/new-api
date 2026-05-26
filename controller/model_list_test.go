@@ -283,3 +283,116 @@ func TestListModelsTokenLimitIncludesTieredBillingModel(t *testing.T) {
 	require.NotContains(t, ids, "zz-token-tiered-missing-expr-model")
 	require.NotContains(t, ids, "zz-token-unpriced-model")
 }
+
+func TestUpdateOptionRejectsInvalidAffiliateSettings(t *testing.T) {
+	setupModelListControllerTestDB(t)
+
+	affiliateSetting := operation_setting.GetAffiliateSetting()
+	originalAffiliateSetting := *affiliateSetting
+	paymentSetting := operation_setting.GetPaymentSetting()
+	originalPaymentSetting := *paymentSetting
+	t.Cleanup(func() {
+		*affiliateSetting = originalAffiliateSetting
+		*paymentSetting = originalPaymentSetting
+	})
+
+	paymentSetting.ComplianceConfirmed = true
+	paymentSetting.ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
+
+	cases := []struct {
+		name     string
+		key      string
+		value    string
+		contains string
+	}{
+		{
+			name:     "invalid bool",
+			key:      "affiliate_setting.enabled",
+			value:    `"maybe"`,
+			contains: "必须是布尔值",
+		},
+		{
+			name:     "negative integer",
+			key:      "affiliate_setting.min_topup_quota",
+			value:    `-1`,
+			contains: "不能为负数",
+		},
+		{
+			name:     "invalid integer",
+			key:      "affiliate_setting.recurring_max_count",
+			value:    `"abc"`,
+			contains: "必须是整数",
+		},
+		{
+			name:     "negative rate",
+			key:      "affiliate_setting.first_reward_rate",
+			value:    `-0.1`,
+			contains: "不能为负数",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(
+				http.MethodPut,
+				"/api/option",
+				strings.NewReader(fmt.Sprintf(`{"key":%q,"value":%s}`, tc.key, tc.value)),
+			)
+
+			UpdateOption(ctx)
+
+			require.Equal(t, http.StatusOK, recorder.Code)
+			var response struct {
+				Success bool   `json:"success"`
+				Message string `json:"message"`
+			}
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+			require.False(t, response.Success)
+			require.Contains(t, response.Message, tc.contains)
+		})
+	}
+}
+
+func TestUpdateOptionRejectsAffiliateRewardsWithoutCompliance(t *testing.T) {
+	setupModelListControllerTestDB(t)
+
+	affiliateSetting := operation_setting.GetAffiliateSetting()
+	originalAffiliateSetting := *affiliateSetting
+	paymentSetting := operation_setting.GetPaymentSetting()
+	originalPaymentSetting := *paymentSetting
+	t.Cleanup(func() {
+		*affiliateSetting = originalAffiliateSetting
+		*paymentSetting = originalPaymentSetting
+	})
+
+	*affiliateSetting = operation_setting.AffiliateSetting{
+		Enabled:                false,
+		FirstRewardEnabled:     true,
+		FirstRewardRate:        0.1,
+		RecurringRewardEnabled: false,
+		RecurringRewardRate:    0,
+	}
+	paymentSetting.ComplianceConfirmed = false
+	paymentSetting.ComplianceTermsVersion = ""
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(
+		http.MethodPut,
+		"/api/option",
+		strings.NewReader(`{"key":"affiliate_setting.enabled","value":true}`),
+	)
+
+	UpdateOption(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.False(t, response.Success)
+	require.NotEmpty(t, response.Message)
+}

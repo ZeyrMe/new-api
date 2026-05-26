@@ -87,7 +87,7 @@ export function AffiliateRewardsCard({
             [t('Available Rewards'), formatQuota(availableQuota)],
             [t('Pending Settlement'), formatQuota(pendingQuota)],
             [t('Total Earned'), formatQuota(user?.aff_history_quota ?? 0)],
-            [t('Effective Referrals'), String(user?.aff_count ?? 0)],
+            [t('Invites'), String(user?.aff_count ?? 0)],
           ].map(([label, value]) => (
             <div key={label}>
               <div className='text-muted-foreground truncate text-[10px] font-medium tracking-wider uppercase'>

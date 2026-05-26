@@ -308,6 +308,7 @@ export interface AffiliateRewardRecord {
   basis_money: number
   reward_rate: number
   reward_quota: number
+  transferred_quota: number
   status: AffiliateRewardStatus
   eligible_at: number
   settled_at: number

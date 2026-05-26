@@ -357,7 +357,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                     )}
                   </div>
                   {log.channel_name && (
-                    <span className='text-muted-foreground/70 truncate [font-family:var(--font-body)] !text-xs'>
+                    <span className='text-muted-foreground/70 truncate !text-xs [font-family:var(--font-body)]'>
                       {channelName}
                     </span>
                   )}
@@ -502,7 +502,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
             </Tooltip>
           </TooltipProvider>
           {metaParts.length > 0 && (
-            <span className='text-muted-foreground/60 truncate [font-family:var(--font-body)] !text-xs'>
+            <span className='text-muted-foreground/60 truncate !text-xs [font-family:var(--font-body)]'>
               {metaParts.join(' · ')}
             </span>
           )}
@@ -554,8 +554,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
             ? log.completion_tokens / useTime
             : null
         const timeVariant = getResponseTimeColor(useTime, log.completion_tokens)
-        const frtVariant =
-          frt != null && frt > 0 ? getFirstResponseTimeColor(frt / 1000) : null
+        const frtVariant = frt ? getFirstResponseTimeColor(frt / 1000) : null
 
         const timingBgMap: Record<string, string> = {
           success:
@@ -579,14 +578,14 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                 className={cn('font-mono', timingBgMap[timeVariant])}
               />
               {log.is_stream &&
-                (frt != null && frt > 0 && frtVariant != null ? (
+                (frt != null && frt > 0 ? (
                   <StatusBadge
                     label={formatUseTime(frt / 1000)}
                     variant={frtVariant as StatusBadgeProps['variant']}
                     size='sm'
                     showDot={false}
                     copyable={false}
-                    className={cn('font-mono', timingBgMap[frtVariant])}
+                    className={cn('font-mono', timingBgMap[frtVariant ?? 'neutral'])}
                   />
                 ) : (
                   <StatusBadge
@@ -599,8 +598,8 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                   />
                 ))}
             </div>
-            <div className='flex items-center gap-1 [font-family:var(--font-body)] !text-xs leading-none'>
-              <span className='text-muted-foreground/60 [font-family:var(--font-body)] !text-xs leading-none'>
+            <div className='flex items-center gap-1 !text-xs leading-none [font-family:var(--font-body)]'>
+              <span className='text-muted-foreground/60 !text-xs leading-none [font-family:var(--font-body)]'>
                 {log.is_stream ? t('Stream') : t('Non-stream')}
                 {tokensPerSecond != null && (
                   <>
@@ -737,7 +736,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
 
         return (
           <div className='flex flex-col gap-0.5'>
-            <span className='border-border/80 bg-muted/60 inline-flex w-fit items-center rounded-md border px-1.5 py-0.5 [font-family:var(--font-body)] font-semibold tabular-nums'>
+            <span className='border-border/80 bg-muted/60 inline-flex w-fit items-center rounded-md border px-1.5 py-0.5 font-semibold tabular-nums [font-family:var(--font-body)]'>
               {quotaStr}
             </span>
           </div>

@@ -148,15 +148,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string) (*TopUp, int, erro
 		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
 			return err
 		}
-		if err := ApplyAffiliateRewardOnTopUpSuccess(tx, AffiliateRewardTopUpEvent{
-			InviteeId:     topUp.UserId,
-			TopupId:       topUp.Id,
-			TradeNo:       topUp.TradeNo,
-			BasisQuota:    quotaToAdd,
-			BasisMoney:    topUp.Money,
-			TriggerSource: PaymentProviderEpay,
-			CompletedAt:   topUp.CompleteTime,
-		}); err != nil {
+		if err := ApplyAffiliateRewardForTopUpTx(tx, topUp, quotaToAdd, PaymentProviderEpay, false); err != nil {
 			return err
 		}
 		completed = *topUp
@@ -204,15 +196,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		if err != nil {
 			return err
 		}
-		if err := ApplyAffiliateRewardOnTopUpSuccess(tx, AffiliateRewardTopUpEvent{
-			InviteeId:     topUp.UserId,
-			TopupId:       topUp.Id,
-			TradeNo:       topUp.TradeNo,
-			BasisQuota:    int(quota),
-			BasisMoney:    topUp.Money,
-			TriggerSource: PaymentProviderStripe,
-			CompletedAt:   topUp.CompleteTime,
-		}); err != nil {
+		if err := ApplyAffiliateRewardForTopUpTx(tx, topUp, int(quota), PaymentProviderStripe, false); err != nil {
 			return err
 		}
 
@@ -445,15 +429,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
 			return err
 		}
-		if err := ApplyAffiliateRewardOnTopUpSuccess(tx, AffiliateRewardTopUpEvent{
-			InviteeId:     topUp.UserId,
-			TopupId:       topUp.Id,
-			TradeNo:       topUp.TradeNo,
-			BasisQuota:    quotaToAdd,
-			BasisMoney:    topUp.Money,
-			TriggerSource: "admin",
-			CompletedAt:   topUp.CompleteTime,
-		}); err != nil {
+		if err := ApplyAffiliateRewardForTopUpTx(tx, topUp, quotaToAdd, "admin", false); err != nil {
 			return err
 		}
 
@@ -535,15 +511,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 		if err != nil {
 			return err
 		}
-		if err := ApplyAffiliateRewardOnTopUpSuccess(tx, AffiliateRewardTopUpEvent{
-			InviteeId:     topUp.UserId,
-			TopupId:       topUp.Id,
-			TradeNo:       topUp.TradeNo,
-			BasisQuota:    int(quota),
-			BasisMoney:    topUp.Money,
-			TriggerSource: PaymentProviderCreem,
-			CompletedAt:   topUp.CompleteTime,
-		}); err != nil {
+		if err := ApplyAffiliateRewardForTopUpTx(tx, topUp, int(quota), PaymentProviderCreem, false); err != nil {
 			return err
 		}
 
@@ -607,15 +575,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
 			return err
 		}
-		if err := ApplyAffiliateRewardOnTopUpSuccess(tx, AffiliateRewardTopUpEvent{
-			InviteeId:     topUp.UserId,
-			TopupId:       topUp.Id,
-			TradeNo:       topUp.TradeNo,
-			BasisQuota:    quotaToAdd,
-			BasisMoney:    topUp.Money,
-			TriggerSource: PaymentProviderWaffo,
-			CompletedAt:   topUp.CompleteTime,
-		}); err != nil {
+		if err := ApplyAffiliateRewardForTopUpTx(tx, topUp, quotaToAdd, PaymentProviderWaffo, false); err != nil {
 			return err
 		}
 
@@ -679,15 +639,7 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
 			return err
 		}
-		if err := ApplyAffiliateRewardOnTopUpSuccess(tx, AffiliateRewardTopUpEvent{
-			InviteeId:     topUp.UserId,
-			TopupId:       topUp.Id,
-			TradeNo:       topUp.TradeNo,
-			BasisQuota:    quotaToAdd,
-			BasisMoney:    topUp.Money,
-			TriggerSource: PaymentProviderWaffoPancake,
-			CompletedAt:   topUp.CompleteTime,
-		}); err != nil {
+		if err := ApplyAffiliateRewardForTopUpTx(tx, topUp, quotaToAdd, PaymentProviderWaffoPancake, false); err != nil {
 			return err
 		}
 
