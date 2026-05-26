@@ -344,6 +344,9 @@ func (user *User) TransferAffQuotaToQuota(quota int) error {
 	if float64(quota) < common.QuotaPerUnit {
 		return fmt.Errorf("转移额度最小为%s！", logger.LogQuota(int(common.QuotaPerUnit)))
 	}
+	if _, err := SettleAvailableAffiliateRewards(user.Id); err != nil {
+		return err
+	}
 
 	// 开始数据库事务
 	tx := DB.Begin()
@@ -369,6 +372,9 @@ func (user *User) TransferAffQuotaToQuota(quota int) error {
 
 	// 保存用户状态
 	if err := tx.Save(user).Error; err != nil {
+		return err
+	}
+	if err := MarkAffiliateRewardsTransferredTx(tx, user.Id, quota); err != nil {
 		return err
 	}
 
@@ -422,11 +428,6 @@ func (user *User) Insert(inviterId int) error {
 		if common.QuotaForInvitee > 0 {
 			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
 			RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
-		}
-		if common.QuotaForInviter > 0 {
-			//_ = IncreaseUserQuota(inviterId, common.QuotaForInviter)
-			RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
-			_ = inviteUser(inviterId)
 		}
 	}
 	return nil
@@ -483,10 +484,6 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 		if common.QuotaForInvitee > 0 {
 			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
 			RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
-		}
-		if common.QuotaForInviter > 0 {
-			RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
-			_ = inviteUser(inviterId)
 		}
 	}
 }

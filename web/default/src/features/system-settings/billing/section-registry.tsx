@@ -20,6 +20,7 @@ import { parseCurrencyDisplayType } from '@/lib/currency'
 import { CheckinSettingsSection } from '../general/checkin-settings-section'
 import { PricingSection } from '../general/pricing-section'
 import { QuotaSettingsSection } from '../general/quota-settings-section'
+import { ReferralRewardsSection } from '../general/referral-rewards-section'
 import { PaymentSettingsSection } from '../integrations/payment-settings-section'
 import { RatioSettingsCard } from '../models/ratio-settings-card'
 import type { BillingSettings } from '../types'
@@ -97,6 +98,45 @@ const BILLING_SECTIONS = [
               settings['general_setting.custom_currency_exchange_rate'] ?? 1,
           },
         }}
+      />
+    ),
+  },
+  {
+    id: 'referral-rewards',
+    titleKey: 'Referral Rewards',
+    build: (settings: BillingSettings) => (
+      <ReferralRewardsSection
+        defaultValues={{
+          affiliate_setting: {
+            enabled: settings['affiliate_setting.enabled'],
+            attribution_window_days:
+              settings['affiliate_setting.attribution_window_days'],
+            min_topup_quota: settings['affiliate_setting.min_topup_quota'],
+            settlement_delay_days:
+              settings['affiliate_setting.settlement_delay_days'],
+            first_reward_enabled:
+              settings['affiliate_setting.first_reward_enabled'],
+            first_reward_rate: settings['affiliate_setting.first_reward_rate'],
+            first_reward_cap_quota:
+              settings['affiliate_setting.first_reward_cap_quota'],
+            recurring_reward_enabled:
+              settings['affiliate_setting.recurring_reward_enabled'],
+            recurring_reward_rate:
+              settings['affiliate_setting.recurring_reward_rate'],
+            recurring_window_days:
+              settings['affiliate_setting.recurring_window_days'],
+            recurring_max_count:
+              settings['affiliate_setting.recurring_max_count'],
+            recurring_cap_per_invitee:
+              settings['affiliate_setting.recurring_cap_per_invitee'],
+            include_subscription_orders:
+              settings['affiliate_setting.include_subscription_orders'],
+          },
+        }}
+        complianceConfirmed={
+          (settings['payment_setting.compliance_confirmed'] ?? false) &&
+          settings['payment_setting.compliance_terms_version'] === 'v1'
+        }
       />
     ),
   },

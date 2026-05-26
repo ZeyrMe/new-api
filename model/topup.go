@@ -106,6 +106,65 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 	})
 }
 
+func RechargeEpay(tradeNo string, actualPaymentMethod string) (*TopUp, int, error) {
+	if tradeNo == "" {
+		return nil, 0, errors.New("未提供支付单号")
+	}
+	var completed TopUp
+	var quotaToAdd int
+	refCol := "`trade_no`"
+	if common.UsingPostgreSQL {
+		refCol = `"trade_no"`
+	}
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		topUp := &TopUp{}
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
+			return errors.New("充值订单不存在")
+		}
+		if topUp.PaymentProvider != PaymentProviderEpay {
+			return ErrPaymentMethodMismatch
+		}
+		if topUp.Status == common.TopUpStatusSuccess {
+			completed = *topUp
+			return nil
+		}
+		if topUp.Status != common.TopUpStatusPending {
+			return errors.New("充值订单状态错误")
+		}
+		if actualPaymentMethod != "" && topUp.PaymentMethod != actualPaymentMethod {
+			topUp.PaymentMethod = actualPaymentMethod
+		}
+		topUp.CompleteTime = common.GetTimestamp()
+		topUp.Status = common.TopUpStatusSuccess
+		if err := tx.Save(topUp).Error; err != nil {
+			return err
+		}
+		dAmount := decimal.NewFromInt(topUp.Amount)
+		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
+		quotaToAdd = int(dAmount.Mul(dQuotaPerUnit).IntPart())
+		if quotaToAdd <= 0 {
+			return errors.New("无效的充值额度")
+		}
+		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
+			return err
+		}
+		if err := ApplyAffiliateRewardOnTopUpSuccess(tx, AffiliateRewardTopUpEvent{
+			InviteeId:     topUp.UserId,
+			TopupId:       topUp.Id,
+			TradeNo:       topUp.TradeNo,
+			BasisQuota:    quotaToAdd,
+			BasisMoney:    topUp.Money,
+			TriggerSource: PaymentProviderEpay,
+			CompletedAt:   topUp.CompleteTime,
+		}); err != nil {
+			return err
+		}
+		completed = *topUp
+		return nil
+	})
+	return &completed, quotaToAdd, err
+}
+
 func Recharge(referenceId string, customerId string, callerIp string) (err error) {
 	if referenceId == "" {
 		return errors.New("未提供支付单号")
@@ -143,6 +202,17 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		quota = topUp.Money * common.QuotaPerUnit
 		err = tx.Model(&User{}).Where("id = ?", topUp.UserId).Updates(map[string]interface{}{"stripe_customer": customerId, "quota": gorm.Expr("quota + ?", quota)}).Error
 		if err != nil {
+			return err
+		}
+		if err := ApplyAffiliateRewardOnTopUpSuccess(tx, AffiliateRewardTopUpEvent{
+			InviteeId:     topUp.UserId,
+			TopupId:       topUp.Id,
+			TradeNo:       topUp.TradeNo,
+			BasisQuota:    int(quota),
+			BasisMoney:    topUp.Money,
+			TriggerSource: PaymentProviderStripe,
+			CompletedAt:   topUp.CompleteTime,
+		}); err != nil {
 			return err
 		}
 
@@ -331,6 +401,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	var quotaToAdd int
 	var payMoney float64
 	var paymentMethod string
+	var completedNow bool
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		topUp := &TopUp{}
@@ -374,10 +445,22 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
 			return err
 		}
+		if err := ApplyAffiliateRewardOnTopUpSuccess(tx, AffiliateRewardTopUpEvent{
+			InviteeId:     topUp.UserId,
+			TopupId:       topUp.Id,
+			TradeNo:       topUp.TradeNo,
+			BasisQuota:    quotaToAdd,
+			BasisMoney:    topUp.Money,
+			TriggerSource: "admin",
+			CompletedAt:   topUp.CompleteTime,
+		}); err != nil {
+			return err
+		}
 
 		userId = topUp.UserId
 		payMoney = topUp.Money
 		paymentMethod = topUp.PaymentMethod
+		completedNow = true
 		return nil
 	})
 
@@ -386,7 +469,9 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	}
 
 	// 事务外记录日志，避免阻塞
-	RecordTopupLog(userId, fmt.Sprintf("管理员补单成功，充值金额: %v，支付金额：%f", logger.FormatQuota(quotaToAdd), payMoney), callerIp, paymentMethod, "admin")
+	if completedNow && quotaToAdd > 0 {
+		RecordTopupLog(userId, fmt.Sprintf("管理员补单成功，充值金额: %v，支付金额：%f", logger.FormatQuota(quotaToAdd), payMoney), callerIp, paymentMethod, "admin")
+	}
 	return nil
 }
 func RechargeCreem(referenceId string, customerEmail string, customerName string, callerIp string) (err error) {
@@ -450,6 +535,17 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 		if err != nil {
 			return err
 		}
+		if err := ApplyAffiliateRewardOnTopUpSuccess(tx, AffiliateRewardTopUpEvent{
+			InviteeId:     topUp.UserId,
+			TopupId:       topUp.Id,
+			TradeNo:       topUp.TradeNo,
+			BasisQuota:    int(quota),
+			BasisMoney:    topUp.Money,
+			TriggerSource: PaymentProviderCreem,
+			CompletedAt:   topUp.CompleteTime,
+		}); err != nil {
+			return err
+		}
 
 		return nil
 	})
@@ -511,6 +607,17 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
 			return err
 		}
+		if err := ApplyAffiliateRewardOnTopUpSuccess(tx, AffiliateRewardTopUpEvent{
+			InviteeId:     topUp.UserId,
+			TopupId:       topUp.Id,
+			TradeNo:       topUp.TradeNo,
+			BasisQuota:    quotaToAdd,
+			BasisMoney:    topUp.Money,
+			TriggerSource: PaymentProviderWaffo,
+			CompletedAt:   topUp.CompleteTime,
+		}); err != nil {
+			return err
+		}
 
 		return nil
 	})
@@ -570,6 +677,17 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 		}
 
 		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
+			return err
+		}
+		if err := ApplyAffiliateRewardOnTopUpSuccess(tx, AffiliateRewardTopUpEvent{
+			InviteeId:     topUp.UserId,
+			TopupId:       topUp.Id,
+			TradeNo:       topUp.TradeNo,
+			BasisQuota:    quotaToAdd,
+			BasisMoney:    topUp.Money,
+			TriggerSource: PaymentProviderWaffoPancake,
+			CompletedAt:   topUp.CompleteTime,
+		}); err != nil {
 			return err
 		}
 

@@ -236,6 +236,10 @@ export interface UserWalletData {
   request_count: number
   /** Affiliate quota (pending rewards) */
   aff_quota: number
+  /** Affiliate quota available for transfer */
+  aff_available_quota?: number
+  /** Affiliate quota still pending settlement */
+  aff_pending_quota?: number
   /** Total affiliate quota earned (historical) */
   aff_history_quota: number
   /** Number of successful affiliate invites */
@@ -278,6 +282,42 @@ export interface TopupRecord {
  */
 export interface BillingHistoryResponse {
   items: TopupRecord[]
+  total: number
+}
+
+export type AffiliateRewardStatus =
+  | 'pending'
+  | 'available'
+  | 'transferred'
+  | 'voided'
+
+export type AffiliateRewardTriggerType =
+  | 'first_topup'
+  | 'recurring_topup'
+  | 'subscription_order'
+
+export interface AffiliateRewardRecord {
+  id: number
+  reward_key: string
+  inviter_id: number
+  invitee_id: number
+  topup_id: number
+  trade_no: string
+  trigger_type: AffiliateRewardTriggerType
+  basis_quota: number
+  basis_money: number
+  reward_rate: number
+  reward_quota: number
+  status: AffiliateRewardStatus
+  eligible_at: number
+  settled_at: number
+  void_reason: string
+  created_at: number
+  updated_at: number
+}
+
+export interface AffiliateRewardsResponse {
+  items: AffiliateRewardRecord[]
   total: number
 }
 

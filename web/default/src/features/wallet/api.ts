@@ -31,6 +31,7 @@ import type {
   AffiliateCodeResponse,
   AffiliateTransferResponse,
   BillingHistoryResponse,
+  AffiliateRewardsResponse,
   CompleteOrderRequest,
   CreemPaymentRequest,
   CreemPaymentResponse,
@@ -202,6 +203,21 @@ export async function getUserBillingHistory(
     params.append('keyword', keyword)
   }
   const res = await api.get(`/api/user/topup/self?${params.toString()}`)
+  return res.data
+}
+
+/**
+ * Get affiliate reward history for current user
+ */
+export async function getAffiliateRewards(
+  page: number,
+  pageSize: number
+): Promise<ApiResponse<AffiliateRewardsResponse>> {
+  const params = new URLSearchParams({
+    p: page.toString(),
+    page_size: pageSize.toString(),
+  })
+  const res = await api.get(`/api/user/aff_rewards?${params.toString()}`)
   return res.data
 }
 

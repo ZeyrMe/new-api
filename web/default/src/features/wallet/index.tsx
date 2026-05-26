@@ -23,6 +23,7 @@ import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { SectionPageLayout } from '@/components/layout'
 import { AffiliateRewardsCard } from './components/affiliate-rewards-card'
+import { AffiliateRewardHistoryDialog } from './components/dialogs/affiliate-reward-history-dialog'
 import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
 import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
 import { PaymentConfirmDialog } from './components/dialogs/payment-confirm-dialog'
@@ -68,6 +69,7 @@ export function Wallet(props: WalletProps) {
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false)
   const [transferDialogOpen, setTransferDialogOpen] = useState(false)
   const [billingDialogOpen, setBillingDialogOpen] = useState(false)
+  const [rewardHistoryDialogOpen, setRewardHistoryDialogOpen] = useState(false)
   const [redemptionCode, setRedemptionCode] = useState('')
   const [creemDialogOpen, setCreemDialogOpen] = useState(false)
   const [selectedCreemProduct, setSelectedCreemProduct] =
@@ -318,6 +320,7 @@ export function Wallet(props: WalletProps) {
               user={user}
               affiliateLink={affiliateLink}
               onTransfer={() => setTransferDialogOpen(true)}
+              onViewRewards={() => setRewardHistoryDialogOpen(true)}
               complianceConfirmed={
                 topupInfo?.payment_compliance_confirmed !== false
               }
@@ -344,8 +347,13 @@ export function Wallet(props: WalletProps) {
         open={transferDialogOpen}
         onOpenChange={setTransferDialogOpen}
         onConfirm={handleTransfer}
-        availableQuota={user?.aff_quota ?? 0}
+        availableQuota={user?.aff_available_quota ?? user?.aff_quota ?? 0}
         transferring={transferring}
+      />
+
+      <AffiliateRewardHistoryDialog
+        open={rewardHistoryDialogOpen}
+        onOpenChange={setRewardHistoryDialogOpen}
       />
 
       <BillingHistoryDialog
