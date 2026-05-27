@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Share2 } from 'lucide-react'
+import { List, Share2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { formatQuota } from '@/lib/format'
 import { Button } from '@/components/ui/button'
@@ -30,6 +30,7 @@ interface AffiliateRewardsCardProps {
   user: UserWalletData | null
   affiliateLink: string
   onTransfer: () => void
+  onViewRewards: () => void
   complianceConfirmed?: boolean
   loading?: boolean
 }
@@ -38,6 +39,7 @@ export function AffiliateRewardsCard({
   user,
   affiliateLink,
   onTransfer,
+  onViewRewards,
   complianceConfirmed = true,
   loading,
 }: AffiliateRewardsCardProps) {
@@ -57,18 +59,20 @@ export function AffiliateRewardsCard({
     )
   }
 
-  const hasRewards = (user?.aff_quota ?? 0) > 0
+  const availableQuota = user?.aff_available_quota ?? user?.aff_quota ?? 0
+  const pendingQuota = user?.aff_pending_quota ?? 0
+  const hasRewards = availableQuota > 0
 
   return (
     <Card className='bg-muted/20 py-0'>
-      <CardContent className='grid gap-3 p-3 sm:gap-4 sm:p-4 lg:grid-cols-[minmax(200px,1fr)_minmax(180px,0.65fr)_minmax(280px,1fr)] lg:items-center'>
+      <CardContent className='grid gap-3 p-3 sm:gap-4 sm:p-4 lg:grid-cols-[minmax(210px,0.95fr)_minmax(250px,0.9fr)_minmax(300px,1fr)] lg:items-center'>
         <div className='flex min-w-0 items-center gap-2.5'>
           <div className='bg-background flex size-8 shrink-0 items-center justify-center rounded-lg border'>
             <Share2 className='text-muted-foreground size-4' />
           </div>
           <div className='min-w-0'>
             <h3 className='truncate text-sm font-semibold'>
-              {t('Referral Program')}
+              {t('Referral Rewards')}
             </h3>
             <p className='text-muted-foreground line-clamp-1 text-xs'>
               {t(
@@ -78,10 +82,15 @@ export function AffiliateRewardsCard({
           </div>
         </div>
 
-        <div className='grid grid-cols-3 gap-1.5 text-center'>
+        <div className='grid grid-cols-2 gap-2 text-center sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-5'>
           {[
-            [t('Pending'), formatQuota(user?.aff_quota ?? 0)],
+            [t('Available Rewards'), formatQuota(availableQuota)],
+            [t('Pending Settlement'), formatQuota(pendingQuota)],
             [t('Total Earned'), formatQuota(user?.aff_history_quota ?? 0)],
+            [
+              t('Effective Referrals'),
+              String(user?.aff_effective_count ?? 0),
+            ],
             [t('Invites'), String(user?.aff_count ?? 0)],
           ].map(([label, value]) => (
             <div key={label}>
@@ -95,7 +104,7 @@ export function AffiliateRewardsCard({
           ))}
         </div>
 
-        <div className='flex items-center gap-2'>
+        <div className='flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap'>
           <Input
             value={affiliateLink}
             readOnly
@@ -109,6 +118,15 @@ export function AffiliateRewardsCard({
             tooltip={t('Copy referral link')}
             aria-label={t('Copy referral link')}
           />
+          <Button
+            onClick={onViewRewards}
+            variant='outline'
+            className='bg-background h-9 shrink-0 px-3'
+            size='sm'
+          >
+            <List data-icon='inline-start' />
+            {t('View rewards')}
+          </Button>
           {hasRewards && (
             <Button
               onClick={onTransfer}

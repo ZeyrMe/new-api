@@ -175,7 +175,9 @@ export function QuotaSettingsSection({
               name='QuotaForInviter'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('Inviter Reward')}</FormLabel>
+                  <FormLabel>
+                    {t('Legacy inviter registration reward')}
+                  </FormLabel>
                   <FormControl>
                     <Input
                       type='number'
@@ -187,7 +189,9 @@ export function QuotaSettingsSection({
                     />
                   </FormControl>
                   <FormDescription>
-                    {t('Quota given to users who invite others')}
+                    {t(
+                      'Legacy registration reward for inviters. Recharge-based referral rewards are configured separately.'
+                    )}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

@@ -23,6 +23,7 @@ import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { SectionPageLayout } from '@/components/layout'
 import { AffiliateRewardsCard } from './components/affiliate-rewards-card'
+import { AffiliateRewardHistoryDialog } from './components/dialogs/affiliate-reward-history-dialog'
 import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
 import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
 import { PaymentConfirmDialog } from './components/dialogs/payment-confirm-dialog'
@@ -56,6 +57,10 @@ interface WalletProps {
   initialShowHistory?: boolean
 }
 
+type FetchUserOptions = {
+  silent?: boolean
+}
+
 export function Wallet(props: WalletProps) {
   const { t } = useTranslation()
   const [user, setUser] = useState<UserWalletData | null>(null)
@@ -68,6 +73,7 @@ export function Wallet(props: WalletProps) {
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false)
   const [transferDialogOpen, setTransferDialogOpen] = useState(false)
   const [billingDialogOpen, setBillingDialogOpen] = useState(false)
+  const [rewardHistoryDialogOpen, setRewardHistoryDialogOpen] = useState(false)
   const [redemptionCode, setRedemptionCode] = useState('')
   const [creemDialogOpen, setCreemDialogOpen] = useState(false)
   const [selectedCreemProduct, setSelectedCreemProduct] =
@@ -104,9 +110,12 @@ export function Wallet(props: WalletProps) {
     useWaffoPancakePayment()
 
   // Fetch and refresh user data
-  const fetchUser = useCallback(async () => {
+  const fetchUser = useCallback(async (options?: FetchUserOptions) => {
+    const silent = options?.silent === true
     try {
-      setUserLoading(true)
+      if (!silent) {
+        setUserLoading(true)
+      }
       const response = await getSelf()
       if (response.success && response.data) {
         setUser(response.data as UserWalletData)
@@ -115,9 +124,16 @@ export function Wallet(props: WalletProps) {
       // eslint-disable-next-line no-console
       console.error('Failed to fetch user data:', error)
     } finally {
-      setUserLoading(false)
+      if (!silent) {
+        setUserLoading(false)
+      }
     }
   }, [])
+
+  const refreshUserSilently = useCallback(
+    () => fetchUser({ silent: true }),
+    [fetchUser]
+  )
 
   useEffect(() => {
     fetchUser()
@@ -318,6 +334,7 @@ export function Wallet(props: WalletProps) {
               user={user}
               affiliateLink={affiliateLink}
               onTransfer={() => setTransferDialogOpen(true)}
+              onViewRewards={() => setRewardHistoryDialogOpen(true)}
               complianceConfirmed={
                 topupInfo?.payment_compliance_confirmed !== false
               }
@@ -344,8 +361,14 @@ export function Wallet(props: WalletProps) {
         open={transferDialogOpen}
         onOpenChange={setTransferDialogOpen}
         onConfirm={handleTransfer}
-        availableQuota={user?.aff_quota ?? 0}
+        availableQuota={user?.aff_available_quota ?? user?.aff_quota ?? 0}
         transferring={transferring}
+      />
+
+      <AffiliateRewardHistoryDialog
+        open={rewardHistoryDialogOpen}
+        onOpenChange={setRewardHistoryDialogOpen}
+        onChanged={refreshUserSilently}
       />
 
       <BillingHistoryDialog

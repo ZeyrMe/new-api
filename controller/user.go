@@ -392,10 +392,175 @@ func GetAffCode(c *gin.Context) {
 	return
 }
 
+func GetAffiliateRewards(c *gin.Context) {
+	userId := c.GetInt("id")
+	filter, ok := buildAffiliateRewardQuery(c)
+	if !ok {
+		return
+	}
+	if _, err := model.SettleAvailableAffiliateRewards(userId); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo := common.GetPageQuery(c)
+	rewards, total, err := model.GetUserAffiliateRewards(userId, pageInfo, filter)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(rewards)
+	common.ApiSuccess(c, pageInfo)
+}
+
+func buildAffiliateRewardQuery(c *gin.Context) (model.AffiliateRewardQuery, bool) {
+	filter := model.AffiliateRewardQuery{
+		Keyword:         strings.TrimSpace(c.Query("keyword")),
+		Status:          strings.TrimSpace(c.Query("status")),
+		TriggerType:     strings.TrimSpace(c.Query("trigger_type")),
+		SourceType:      strings.TrimSpace(c.Query("source_type")),
+		PaymentProvider: strings.TrimSpace(c.Query("payment_provider")),
+	}
+	if !validateAffiliateRewardEnum(c, "status", filter.Status, map[string]bool{
+		model.AffiliateRewardStatusPending:     true,
+		model.AffiliateRewardStatusAvailable:   true,
+		model.AffiliateRewardStatusTransferred: true,
+		model.AffiliateRewardStatusVoided:      true,
+	}) {
+		return filter, false
+	}
+	if !validateAffiliateRewardEnum(c, "trigger_type", filter.TriggerType, map[string]bool{
+		model.AffiliateRewardTriggerFirstTopup:     true,
+		model.AffiliateRewardTriggerRecurringTopup: true,
+		model.AffiliateRewardTriggerSubscription:   true,
+	}) {
+		return filter, false
+	}
+	if !validateAffiliateRewardEnum(c, "source_type", filter.SourceType, map[string]bool{
+		model.AffiliateRewardSourceTopup:        true,
+		model.AffiliateRewardSourceSubscription: true,
+	}) {
+		return filter, false
+	}
+	if !validateAffiliateRewardEnum(c, "payment_provider", filter.PaymentProvider, map[string]bool{
+		model.PaymentProviderEpay:         true,
+		model.PaymentProviderStripe:       true,
+		model.PaymentProviderCreem:        true,
+		model.PaymentProviderWaffo:        true,
+		model.PaymentProviderWaffoPancake: true,
+	}) {
+		return filter, false
+	}
+	if raw := strings.TrimSpace(c.Query("start_time")); raw != "" {
+		value, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || value < 0 {
+			common.ApiErrorMsg(c, "start_time 参数错误")
+			return filter, false
+		}
+		filter.StartTime = value
+	}
+	if raw := strings.TrimSpace(c.Query("end_time")); raw != "" {
+		value, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || value < 0 {
+			common.ApiErrorMsg(c, "end_time 参数错误")
+			return filter, false
+		}
+		filter.EndTime = value
+	}
+	return filter, true
+}
+
+func validateAffiliateRewardEnum(c *gin.Context, name string, value string, allowed map[string]bool) bool {
+	if value == "" {
+		return true
+	}
+	if allowed[value] {
+		return true
+	}
+	common.ApiErrorMsg(c, fmt.Sprintf("%s 参数错误", name))
+	return false
+}
+
+func GetAdminAffiliateRewards(c *gin.Context) {
+	filter, ok := buildAffiliateRewardQuery(c)
+	if !ok {
+		return
+	}
+	if _, err := model.SettleAllAvailableAffiliateRewards(); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo := common.GetPageQuery(c)
+	rewards, total, err := model.GetAffiliateRewards(filter, pageInfo)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	summary, err := model.GetAffiliateRewardSummary(filter)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(rewards)
+	common.ApiSuccess(c, gin.H{
+		"page":      pageInfo.Page,
+		"page_size": pageInfo.PageSize,
+		"total":     pageInfo.Total,
+		"items":     pageInfo.Items,
+		"summary":   summary,
+	})
+}
+
+type VoidAffiliateRewardRequest struct {
+	Reason string `json:"reason"`
+}
+
+func VoidAffiliateReward(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		common.ApiErrorMsg(c, "参数错误")
+		return
+	}
+	var req VoidAffiliateRewardRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorMsg(c, "参数错误")
+		return
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		common.ApiErrorMsg(c, "作废原因不能为空")
+		return
+	}
+	reward, err := model.VoidAffiliateReward(id, reason)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.SysLog(fmt.Sprintf("affiliate reward voided by admin admin_id=%d reward_id=%d inviter=%d invitee=%d reward=%s transferred=%s reason=%q result=success",
+		c.GetInt("id"), reward.Id, reward.InviterId, reward.InviteeId,
+		logger.FormatQuota(reward.RewardQuota), logger.FormatQuota(reward.TransferredQuota), reason))
+	common.ApiSuccess(c, reward)
+}
+
 func GetSelf(c *gin.Context) {
 	id := c.GetInt("id")
 	userRole := c.GetInt("role")
+	if _, err := model.SettleAvailableAffiliateRewards(id); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	user, err := model.GetUserById(id, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	affPendingQuota, err := model.GetPendingAffiliateRewardQuota(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	affEffectiveCount, err := model.GetEffectiveAffiliateInviteeCount(id)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -411,31 +576,34 @@ func GetSelf(c *gin.Context) {
 
 	// 构建响应数据，包含用户信息和权限
 	responseData := map[string]interface{}{
-		"id":                user.Id,
-		"username":          user.Username,
-		"display_name":      user.DisplayName,
-		"role":              user.Role,
-		"status":            user.Status,
-		"email":             user.Email,
-		"github_id":         user.GitHubId,
-		"discord_id":        user.DiscordId,
-		"oidc_id":           user.OidcId,
-		"wechat_id":         user.WeChatId,
-		"telegram_id":       user.TelegramId,
-		"group":             user.Group,
-		"quota":             user.Quota,
-		"used_quota":        user.UsedQuota,
-		"request_count":     user.RequestCount,
-		"aff_code":          user.AffCode,
-		"aff_count":         user.AffCount,
-		"aff_quota":         user.AffQuota,
-		"aff_history_quota": user.AffHistoryQuota,
-		"inviter_id":        user.InviterId,
-		"linux_do_id":       user.LinuxDOId,
-		"setting":           user.Setting,
-		"stripe_customer":   user.StripeCustomer,
-		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
-		"permissions":       permissions,                // 新增权限字段
+		"id":                  user.Id,
+		"username":            user.Username,
+		"display_name":        user.DisplayName,
+		"role":                user.Role,
+		"status":              user.Status,
+		"email":               user.Email,
+		"github_id":           user.GitHubId,
+		"discord_id":          user.DiscordId,
+		"oidc_id":             user.OidcId,
+		"wechat_id":           user.WeChatId,
+		"telegram_id":         user.TelegramId,
+		"group":               user.Group,
+		"quota":               user.Quota,
+		"used_quota":          user.UsedQuota,
+		"request_count":       user.RequestCount,
+		"aff_code":            user.AffCode,
+		"aff_count":           user.AffCount,
+		"aff_effective_count": int(affEffectiveCount),
+		"aff_quota":           user.AffQuota,
+		"aff_available_quota": user.AffQuota,
+		"aff_pending_quota":   affPendingQuota,
+		"aff_history_quota":   user.AffHistoryQuota,
+		"inviter_id":          user.InviterId,
+		"linux_do_id":         user.LinuxDOId,
+		"setting":             user.Setting,
+		"stripe_customer":     user.StripeCustomer,
+		"sidebar_modules":     userSetting.SidebarModules, // 正确提取sidebar_modules字段
+		"permissions":         permissions,                // 新增权限字段
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -975,6 +1143,9 @@ func ManageUser(c *gin.Context) {
 			if err := model.DB.Model(&model.User{}).Where("id = ?", user.Id).Update("quota", req.Value).Error; err != nil {
 				common.ApiError(c, err)
 				return
+			}
+			if err := model.SyncUserQuotaCacheValue(user.Id, req.Value); err != nil {
+				common.SysLog(fmt.Sprintf("failed to sync user quota cache after admin override user_id=%d quota=%d: %s", user.Id, req.Value, err.Error()))
 			}
 			model.RecordLogWithAdminInfo(user.Id, model.LogTypeManage,
 				fmt.Sprintf("管理员覆盖用户额度从 %s 为 %s", logger.LogQuota(oldQuota), logger.LogQuota(req.Value)), adminInfo)

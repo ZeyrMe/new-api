@@ -236,10 +236,16 @@ export interface UserWalletData {
   request_count: number
   /** Affiliate quota (pending rewards) */
   aff_quota: number
+  /** Affiliate quota available for transfer */
+  aff_available_quota?: number
+  /** Affiliate quota still pending settlement */
+  aff_pending_quota?: number
   /** Total affiliate quota earned (historical) */
   aff_history_quota: number
   /** Number of successful affiliate invites */
   aff_count: number
+  /** Number of referrals that generated non-voided rewards */
+  aff_effective_count?: number
   /** User group */
   group: string
 }
@@ -279,6 +285,78 @@ export interface TopupRecord {
 export interface BillingHistoryResponse {
   items: TopupRecord[]
   total: number
+}
+
+export type AffiliateRewardStatus =
+  | 'pending'
+  | 'available'
+  | 'transferred'
+  | 'voided'
+
+export type AffiliateRewardTriggerType =
+  | 'first_topup'
+  | 'recurring_topup'
+  | 'subscription_order'
+
+export type AffiliateRewardSourceType = 'topup' | 'subscription_order'
+
+export type AffiliateRewardPaymentProvider =
+  | 'epay'
+  | 'stripe'
+  | 'creem'
+  | 'waffo'
+  | 'waffo_pancake'
+
+export interface AffiliateRewardRecord {
+  id: number
+  reward_key: string
+  inviter_id: number
+  invitee_id: number
+  topup_id: number
+  trade_no: string
+  trigger_type: AffiliateRewardTriggerType
+  source_type?: AffiliateRewardSourceType | ''
+  payment_provider?: AffiliateRewardPaymentProvider | ''
+  basis_quota: number
+  basis_money: number
+  reward_rate: number
+  reward_quota: number
+  transferred_quota: number
+  status: AffiliateRewardStatus
+  eligible_at: number
+  settled_at: number
+  transferred_at?: number
+  void_reason: string
+  created_at: number
+  updated_at: number
+}
+
+export interface AffiliateRewardFilters {
+  keyword?: string
+  status?: AffiliateRewardStatus | 'all'
+  trigger_type?: AffiliateRewardTriggerType | 'all'
+  source_type?: AffiliateRewardSourceType | 'all'
+  payment_provider?: AffiliateRewardPaymentProvider | 'all'
+  start_time?: number
+  end_time?: number
+}
+
+export interface AffiliateRewardSummary {
+  total_reward_quota: number
+  pending_reward_quota: number
+  available_reward_quota: number
+  transferred_reward_quota: number
+  voided_reward_quota: number
+  effective_invitee_count: number
+  total_records: number
+}
+
+export interface AffiliateRewardsResponse {
+  items: AffiliateRewardRecord[]
+  total: number
+  page?: number
+  page_size?: number
+  summary?: AffiliateRewardSummary
 }
 
 /**

@@ -188,6 +188,19 @@ export type BillingSettings = {
   PreConsumedQuota: number
   QuotaForInviter: number
   QuotaForInvitee: number
+  'affiliate_setting.enabled': boolean
+  'affiliate_setting.attribution_window_days': number
+  'affiliate_setting.min_topup_quota': number
+  'affiliate_setting.settlement_delay_days': number
+  'affiliate_setting.first_reward_enabled': boolean
+  'affiliate_setting.first_reward_rate': number
+  'affiliate_setting.first_reward_cap_quota': number
+  'affiliate_setting.recurring_reward_enabled': boolean
+  'affiliate_setting.recurring_reward_rate': number
+  'affiliate_setting.recurring_window_days': number
+  'affiliate_setting.recurring_max_count': number
+  'affiliate_setting.recurring_cap_per_invitee': number
+  'affiliate_setting.include_subscription_orders': boolean
   TopUpLink: string
   'general_setting.docs_link': string
   'quota_setting.enable_free_model_pre_consume': boolean

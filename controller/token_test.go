@@ -48,21 +48,21 @@ type sqliteColumnInfo struct {
 }
 
 type legacyToken struct {
-	Id                 int            `gorm:"primaryKey"`
-	UserId             int            `gorm:"index"`
-	Key                string         `gorm:"column:key;type:char(48);uniqueIndex"`
-	Status             int            `gorm:"default:1"`
-	Name               string         `gorm:"index"`
-	CreatedTime        int64          `gorm:"bigint"`
-	AccessedTime       int64          `gorm:"bigint"`
-	ExpiredTime        int64          `gorm:"bigint;default:-1"`
-	RemainQuota        int            `gorm:"default:0"`
+	Id                 int    `gorm:"primaryKey"`
+	UserId             int    `gorm:"index"`
+	Key                string `gorm:"column:key;type:char(48);uniqueIndex"`
+	Status             int    `gorm:"default:1"`
+	Name               string `gorm:"index"`
+	CreatedTime        int64  `gorm:"bigint"`
+	AccessedTime       int64  `gorm:"bigint"`
+	ExpiredTime        int64  `gorm:"bigint;default:-1"`
+	RemainQuota        int    `gorm:"default:0"`
 	UnlimitedQuota     bool
 	ModelLimitsEnabled bool
-	ModelLimits        string         `gorm:"type:text"`
-	AllowIps           *string        `gorm:"default:''"`
-	UsedQuota          int            `gorm:"default:0"`
-	Group              string         `gorm:"column:group;default:''"`
+	ModelLimits        string  `gorm:"type:text"`
+	AllowIps           *string `gorm:"default:''"`
+	UsedQuota          int     `gorm:"default:0"`
+	Group              string  `gorm:"column:group;default:''"`
 	CrossGroupRetry    bool
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 }
@@ -74,6 +74,7 @@ func (legacyToken) TableName() string {
 func openTokenControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
+	originalState := saveControllerDBTestState()
 	gin.SetMode(gin.TestMode)
 	common.UsingSQLite = true
 	common.UsingMySQL = false
@@ -89,10 +90,8 @@ func openTokenControllerTestDB(t *testing.T) *gorm.DB {
 	model.LOG_DB = db
 
 	t.Cleanup(func() {
-		sqlDB, err := db.DB()
-		if err == nil {
-			_ = sqlDB.Close()
-		}
+		originalState.restore()
+		closeControllerTestDB(t, db)
 	})
 
 	return db
@@ -117,6 +116,7 @@ func setupTokenControllerTestDB(t *testing.T) *gorm.DB {
 func openTokenControllerExternalDB(t *testing.T, dialect string, dsn string) (*gorm.DB, *bool) {
 	t.Helper()
 
+	originalState := saveControllerDBTestState()
 	gin.SetMode(gin.TestMode)
 	common.RedisEnabled = false
 	common.UsingSQLite = false
@@ -142,21 +142,18 @@ func openTokenControllerExternalDB(t *testing.T, dialect string, dsn string) (*g
 	model.DB = db
 	model.LOG_DB = db
 
-	if db.Migrator().HasTable("tokens") {
-		t.Skipf("refusing to run %s migration compatibility test against external database because tokens table already exists", dialect)
-	}
-
 	managedTokensTable := new(bool)
-
 	t.Cleanup(func() {
 		if *managedTokensTable && db.Migrator().HasTable("tokens") {
 			_ = db.Migrator().DropTable("tokens")
 		}
-		sqlDB, err := db.DB()
-		if err == nil {
-			_ = sqlDB.Close()
-		}
+		originalState.restore()
+		closeControllerTestDB(t, db)
 	})
+
+	if db.Migrator().HasTable("tokens") {
+		t.Skipf("refusing to run %s migration compatibility test against external database because tokens table already exists", dialect)
+	}
 
 	return db, managedTokensTable
 }

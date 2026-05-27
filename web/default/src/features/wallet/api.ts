@@ -31,6 +31,9 @@ import type {
   AffiliateCodeResponse,
   AffiliateTransferResponse,
   BillingHistoryResponse,
+  AffiliateRewardFilters,
+  AffiliateRewardRecord,
+  AffiliateRewardsResponse,
   CompleteOrderRequest,
   CreemPaymentRequest,
   CreemPaymentResponse,
@@ -202,6 +205,68 @@ export async function getUserBillingHistory(
     params.append('keyword', keyword)
   }
   const res = await api.get(`/api/user/topup/self?${params.toString()}`)
+  return res.data
+}
+
+/**
+ * Get affiliate reward history for current user
+ */
+export async function getAffiliateRewards(
+  page: number,
+  pageSize: number,
+  filters: AffiliateRewardFilters = {}
+): Promise<ApiResponse<AffiliateRewardsResponse>> {
+  const params = new URLSearchParams({
+    p: page.toString(),
+    page_size: pageSize.toString(),
+  })
+  appendAffiliateRewardFilters(params, filters)
+  const res = await api.get(`/api/user/aff_rewards?${params.toString()}`)
+  return res.data
+}
+
+function appendAffiliateRewardFilters(
+  params: URLSearchParams,
+  filters: AffiliateRewardFilters
+) {
+  Object.entries(filters).forEach(([key, value]) => {
+    if (
+      value === undefined ||
+      value === null ||
+      value === '' ||
+      value === 'all'
+    ) {
+      return
+    }
+    params.append(key, String(value))
+  })
+}
+
+/**
+ * Get affiliate reward history for all users (admin only)
+ */
+export async function getAdminAffiliateRewards(
+  page: number,
+  pageSize: number,
+  filters: AffiliateRewardFilters = {}
+): Promise<ApiResponse<AffiliateRewardsResponse>> {
+  const params = new URLSearchParams({
+    p: page.toString(),
+    page_size: pageSize.toString(),
+  })
+  appendAffiliateRewardFilters(params, filters)
+  const res = await api.get(`/api/user/aff_rewards/admin?${params.toString()}`)
+  return res.data
+}
+
+/**
+ * Void an affiliate reward (admin only)
+ */
+export async function voidAffiliateReward(
+  id: number,
+  reason: string
+): Promise<ApiResponse<AffiliateRewardRecord>> {
+  const res = await api.post(`/api/user/aff_rewards/${id}/void`, { reason })
   return res.data
 }
 

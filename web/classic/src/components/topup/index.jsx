@@ -601,6 +601,11 @@ const TopUp = () => {
         setTopupInfo({
           amount_options: data.amount_options || [],
           discount: data.discount || {},
+          enable_redemption: data.enable_redemption !== false,
+          payment_compliance_confirmed:
+            data.payment_compliance_confirmed !== false,
+          payment_compliance_terms_version:
+            data.payment_compliance_terms_version || '',
         });
 
         // 处理支付方式
@@ -680,15 +685,6 @@ const TopUp = () => {
           setMinTopUp(minTopUpValue);
           setTopUpCount(minTopUpValue);
           setTopUpLink(data.topup_link || '');
-          setTopupInfo((prev) => ({
-            ...prev,
-            enable_redemption: data.enable_redemption !== false,
-            payment_compliance_confirmed:
-              data.payment_compliance_confirmed !== false,
-            payment_compliance_terms_version:
-              data.payment_compliance_terms_version || '',
-          }));
-
           // 设置 Creem 产品
           try {
             const products = JSON.parse(data.creem_products || '[]');
@@ -698,7 +694,7 @@ const TopUp = () => {
           }
 
           // 如果没有自定义充值数量选项，根据最小充值金额生成预设充值额度选项
-          if (topupInfo.amount_options.length === 0) {
+          if (!data.amount_options || data.amount_options.length === 0) {
             setPresetAmounts(generatePresetAmounts(minTopUpValue));
           }
 
@@ -738,8 +734,14 @@ const TopUp = () => {
 
   // 划转邀请额度
   const transfer = async () => {
+    const availableQuota =
+      userState?.user?.aff_available_quota ?? userState?.user?.aff_quota ?? 0;
     if (transferAmount < getQuotaPerUnit()) {
       showError(t('划转金额最低为') + ' ' + renderQuota(getQuotaPerUnit()));
+      return;
+    }
+    if (transferAmount > availableQuota) {
+      showError(t('划转金额不能超过可用返利额度'));
       return;
     }
     const res = await API.post(`/api/user/aff_transfer`, {
@@ -1024,6 +1026,7 @@ const TopUp = () => {
           setOpenTransfer={setOpenTransfer}
           affLink={affLink}
           handleAffLinkClick={handleAffLinkClick}
+          onRewardChanged={getUserQuota}
           complianceConfirmed={topupInfo.payment_compliance_confirmed !== false}
         />
       </div>

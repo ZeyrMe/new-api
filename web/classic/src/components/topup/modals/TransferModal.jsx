@@ -32,6 +32,9 @@ const TransferModal = ({
   transferAmount,
   setTransferAmount,
 }) => {
+  const availableQuota =
+    userState?.user?.aff_available_quota ?? userState?.user?.aff_quota ?? 0;
+
   return (
     <Modal
       title={
@@ -52,7 +55,7 @@ const TransferModal = ({
             {t('可用邀请额度')}
           </Typography.Text>
           <Input
-            value={renderQuota(userState?.user?.aff_quota)}
+            value={renderQuota(availableQuota)}
             disabled
             className='!rounded-lg'
           />
@@ -63,7 +66,7 @@ const TransferModal = ({
           </Typography.Text>
           <InputNumber
             min={getQuotaPerUnit()}
-            max={userState?.user?.aff_quota || 0}
+            max={availableQuota}
             value={transferAmount}
             onChange={(value) => setTransferAmount(value)}
             className='w-full !rounded-lg'
