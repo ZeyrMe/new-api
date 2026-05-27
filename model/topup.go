@@ -41,6 +41,13 @@ const (
 	PaymentProviderBalance      = "balance"
 )
 
+func syncUserQuotaCacheDeltaAfterTopUp(userId int, delta int, provider string) {
+	if err := SyncUserQuotaCacheDelta(userId, delta); err != nil {
+		common.SysLog(fmt.Sprintf("failed to sync user quota cache after topup provider=%s user_id=%d delta=%d: %s",
+			provider, userId, delta, err.Error()))
+	}
+}
+
 var (
 	ErrPaymentMethodMismatch = errors.New("payment method mismatch")
 	ErrTopUpNotFound         = errors.New("topup not found")
@@ -154,6 +161,9 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string) (*TopUp, int, erro
 		completed = *topUp
 		return nil
 	})
+	if err == nil {
+		syncUserQuotaCacheDeltaAfterTopUp(completed.UserId, quotaToAdd, PaymentProviderEpay)
+	}
 	return &completed, quotaToAdd, err
 }
 
@@ -208,6 +218,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		return errors.New("充值失败，请稍后重试")
 	}
 
+	syncUserQuotaCacheDeltaAfterTopUp(topUp.UserId, int(quota), PaymentProviderStripe)
 	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%d", logger.FormatQuota(int(quota)), topUp.Amount), callerIp, topUp.PaymentMethod, PaymentMethodStripe)
 
 	return nil
@@ -446,6 +457,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 
 	// 事务外记录日志，避免阻塞
 	if completedNow && quotaToAdd > 0 {
+		syncUserQuotaCacheDeltaAfterTopUp(userId, quotaToAdd, "admin")
 		RecordTopupLog(userId, fmt.Sprintf("管理员补单成功，充值金额: %v，支付金额：%f", logger.FormatQuota(quotaToAdd), payMoney), callerIp, paymentMethod, "admin")
 	}
 	return nil
@@ -523,6 +535,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 		return errors.New("充值失败，请稍后重试")
 	}
 
+	syncUserQuotaCacheDeltaAfterTopUp(topUp.UserId, int(quota), PaymentProviderCreem)
 	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用Creem充值成功，充值额度: %v，支付金额：%.2f", quota, topUp.Money), callerIp, topUp.PaymentMethod, PaymentMethodCreem)
 
 	return nil
@@ -588,6 +601,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 	}
 
 	if quotaToAdd > 0 {
+		syncUserQuotaCacheDeltaAfterTopUp(topUp.UserId, quotaToAdd, PaymentProviderWaffo)
 		RecordTopupLog(topUp.UserId, fmt.Sprintf("Waffo充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money), callerIp, topUp.PaymentMethod, PaymentMethodWaffo)
 	}
 
@@ -652,6 +666,7 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 	}
 
 	if quotaToAdd > 0 {
+		syncUserQuotaCacheDeltaAfterTopUp(topUp.UserId, quotaToAdd, PaymentProviderWaffoPancake)
 		RecordLog(topUp.UserId, LogTypeTopup, fmt.Sprintf("Waffo Pancake充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money))
 	}
 

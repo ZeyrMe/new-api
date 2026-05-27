@@ -143,6 +143,25 @@ func cacheDecrUserQuota(userId int, delta int64) error {
 	return cacheIncrUserQuota(userId, -delta)
 }
 
+// SyncUserQuotaCacheDelta syncs the cached user quota after a committed DB delta.
+func SyncUserQuotaCacheDelta(userId int, delta int) error {
+	if userId <= 0 || delta == 0 {
+		return nil
+	}
+	if delta > 0 {
+		return cacheIncrUserQuota(userId, int64(delta))
+	}
+	return cacheDecrUserQuota(userId, int64(-delta))
+}
+
+// SyncUserQuotaCacheValue syncs the cached user quota after a committed DB overwrite.
+func SyncUserQuotaCacheValue(userId int, quota int) error {
+	if userId <= 0 {
+		return nil
+	}
+	return updateUserQuotaCache(userId, quota)
+}
+
 // Helper functions to get individual fields if needed
 func getUserGroupCache(userId int) (string, error) {
 	cache, err := GetUserCache(userId)

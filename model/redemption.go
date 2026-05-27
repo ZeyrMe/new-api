@@ -151,6 +151,10 @@ func Redeem(key string, userId int) (quota int, err error) {
 		common.SysError("redemption failed: " + err.Error())
 		return 0, ErrRedeemFailed
 	}
+	if err := SyncUserQuotaCacheDelta(userId, redemption.Quota); err != nil {
+		common.SysLog(fmt.Sprintf("failed to sync user quota cache after redemption user_id=%d delta=%d: %s",
+			userId, redemption.Quota, err.Error()))
+	}
 	RecordLog(userId, LogTypeTopup, fmt.Sprintf("通过兑换码充值 %s，兑换码ID %d", logger.LogQuota(redemption.Quota), redemption.Id))
 	return redemption.Quota, nil
 }

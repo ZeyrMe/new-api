@@ -517,8 +517,19 @@ func VoidAffiliateReward(rewardId int, reason string) (*AffiliateRewardLog, erro
 		return nil, errors.New("void reason is too long")
 	}
 	var reward AffiliateRewardLog
+	if err := DB.Where("id = ?", rewardId).First(&reward).Error; err != nil {
+		return nil, err
+	}
+	if reward.Status == AffiliateRewardStatusVoided {
+		return &reward, nil
+	}
 	voidedNow := false
+	quotaCacheDelta := 0
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		var inviter User
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", reward.InviterId).First(&inviter).Error; err != nil {
+			return err
+		}
 		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", rewardId).First(&reward).Error; err != nil {
 			return err
 		}
@@ -551,6 +562,9 @@ func VoidAffiliateReward(rewardId int, reason string) (*AffiliateRewardLog, erro
 		if err := tx.Where("id = ?", rewardId).First(&reward).Error; err != nil {
 			return err
 		}
+		if reward.TransferredQuota > 0 {
+			quotaCacheDelta = -reward.TransferredQuota
+		}
 		voidedNow = true
 		return nil
 	})
@@ -558,6 +572,10 @@ func VoidAffiliateReward(rewardId int, reason string) (*AffiliateRewardLog, erro
 		return nil, err
 	}
 	if voidedNow {
+		if err := SyncUserQuotaCacheDelta(reward.InviterId, quotaCacheDelta); err != nil {
+			common.SysLog(fmt.Sprintf("failed to sync user quota cache after affiliate reward void reward_id=%d user_id=%d delta=%d: %s",
+				reward.Id, reward.InviterId, quotaCacheDelta, err.Error()))
+		}
 		common.SysLog(fmt.Sprintf("affiliate reward voided reward_id=%d inviter=%d invitee=%d reward=%s transferred=%s reason=%q result=success status=%s",
 			reward.Id, reward.InviterId, reward.InviteeId, logger.FormatQuota(reward.RewardQuota),
 			logger.FormatQuota(reward.TransferredQuota), reason, reward.Status))

@@ -392,8 +392,13 @@ func (user *User) TransferAffQuotaToQuota(quota int) error {
 		return err
 	}
 
-	// 提交事务
-	return tx.Commit().Error
+	if err := tx.Commit().Error; err != nil {
+		return err
+	}
+	if err := SyncUserQuotaCacheDelta(user.Id, quota); err != nil {
+		common.SysLog(fmt.Sprintf("failed to sync user quota cache after affiliate transfer user_id=%d delta=%d: %s", user.Id, quota, err.Error()))
+	}
+	return nil
 }
 
 func (user *User) Insert(inviterId int) error {

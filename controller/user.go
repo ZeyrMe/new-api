@@ -1144,6 +1144,9 @@ func ManageUser(c *gin.Context) {
 				common.ApiError(c, err)
 				return
 			}
+			if err := model.SyncUserQuotaCacheValue(user.Id, req.Value); err != nil {
+				common.SysLog(fmt.Sprintf("failed to sync user quota cache after admin override user_id=%d quota=%d: %s", user.Id, req.Value, err.Error()))
+			}
 			model.RecordLogWithAdminInfo(user.Id, model.LogTypeManage,
 				fmt.Sprintf("管理员覆盖用户额度从 %s 为 %s", logger.LogQuota(oldQuota), logger.LogQuota(req.Value)), adminInfo)
 		default:
