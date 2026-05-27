@@ -394,12 +394,12 @@ func GetAffCode(c *gin.Context) {
 
 func GetAffiliateRewards(c *gin.Context) {
 	userId := c.GetInt("id")
-	if _, err := model.SettleAvailableAffiliateRewards(userId); err != nil {
-		common.ApiError(c, err)
-		return
-	}
 	filter, ok := buildAffiliateRewardQuery(c)
 	if !ok {
+		return
+	}
+	if _, err := model.SettleAvailableAffiliateRewards(userId); err != nil {
+		common.ApiError(c, err)
 		return
 	}
 	pageInfo := common.GetPageQuery(c)
@@ -421,6 +421,36 @@ func buildAffiliateRewardQuery(c *gin.Context) (model.AffiliateRewardQuery, bool
 		SourceType:      strings.TrimSpace(c.Query("source_type")),
 		PaymentProvider: strings.TrimSpace(c.Query("payment_provider")),
 	}
+	if !validateAffiliateRewardEnum(c, "status", filter.Status, map[string]bool{
+		model.AffiliateRewardStatusPending:     true,
+		model.AffiliateRewardStatusAvailable:   true,
+		model.AffiliateRewardStatusTransferred: true,
+		model.AffiliateRewardStatusVoided:      true,
+	}) {
+		return filter, false
+	}
+	if !validateAffiliateRewardEnum(c, "trigger_type", filter.TriggerType, map[string]bool{
+		model.AffiliateRewardTriggerFirstTopup:     true,
+		model.AffiliateRewardTriggerRecurringTopup: true,
+		model.AffiliateRewardTriggerSubscription:   true,
+	}) {
+		return filter, false
+	}
+	if !validateAffiliateRewardEnum(c, "source_type", filter.SourceType, map[string]bool{
+		model.AffiliateRewardSourceTopup:        true,
+		model.AffiliateRewardSourceSubscription: true,
+	}) {
+		return filter, false
+	}
+	if !validateAffiliateRewardEnum(c, "payment_provider", filter.PaymentProvider, map[string]bool{
+		model.PaymentProviderEpay:         true,
+		model.PaymentProviderStripe:       true,
+		model.PaymentProviderCreem:        true,
+		model.PaymentProviderWaffo:        true,
+		model.PaymentProviderWaffoPancake: true,
+	}) {
+		return filter, false
+	}
 	if raw := strings.TrimSpace(c.Query("start_time")); raw != "" {
 		value, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || value < 0 {
@@ -440,9 +470,24 @@ func buildAffiliateRewardQuery(c *gin.Context) (model.AffiliateRewardQuery, bool
 	return filter, true
 }
 
+func validateAffiliateRewardEnum(c *gin.Context, name string, value string, allowed map[string]bool) bool {
+	if value == "" {
+		return true
+	}
+	if allowed[value] {
+		return true
+	}
+	common.ApiErrorMsg(c, fmt.Sprintf("%s 参数错误", name))
+	return false
+}
+
 func GetAdminAffiliateRewards(c *gin.Context) {
 	filter, ok := buildAffiliateRewardQuery(c)
 	if !ok {
+		return
+	}
+	if _, err := model.SettleAllAvailableAffiliateRewards(); err != nil {
+		common.ApiError(c, err)
 		return
 	}
 	pageInfo := common.GetPageQuery(c)
@@ -492,6 +537,9 @@ func VoidAffiliateReward(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	common.SysLog(fmt.Sprintf("affiliate reward voided by admin admin_id=%d reward_id=%d inviter=%d invitee=%d reward=%s transferred=%s reason=%q",
+		c.GetInt("id"), reward.Id, reward.InviterId, reward.InviteeId,
+		logger.FormatQuota(reward.RewardQuota), logger.FormatQuota(reward.TransferredQuota), reason))
 	common.ApiSuccess(c, reward)
 }
 

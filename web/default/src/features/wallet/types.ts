@@ -300,6 +300,13 @@ export type AffiliateRewardTriggerType =
 
 export type AffiliateRewardSourceType = 'topup' | 'subscription_order'
 
+export type AffiliateRewardPaymentProvider =
+  | 'epay'
+  | 'stripe'
+  | 'creem'
+  | 'waffo'
+  | 'waffo_pancake'
+
 export interface AffiliateRewardRecord {
   id: number
   reward_key: string
@@ -309,7 +316,7 @@ export interface AffiliateRewardRecord {
   trade_no: string
   trigger_type: AffiliateRewardTriggerType
   source_type?: AffiliateRewardSourceType | ''
-  payment_provider?: string
+  payment_provider?: AffiliateRewardPaymentProvider | ''
   basis_quota: number
   basis_money: number
   reward_rate: number
@@ -329,7 +336,7 @@ export interface AffiliateRewardFilters {
   status?: AffiliateRewardStatus | 'all'
   trigger_type?: AffiliateRewardTriggerType | 'all'
   source_type?: AffiliateRewardSourceType | 'all'
-  payment_provider?: string
+  payment_provider?: AffiliateRewardPaymentProvider | 'all'
   start_time?: number
   end_time?: number
 }

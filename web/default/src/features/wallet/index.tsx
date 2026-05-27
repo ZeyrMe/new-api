@@ -57,6 +57,10 @@ interface WalletProps {
   initialShowHistory?: boolean
 }
 
+type FetchUserOptions = {
+  silent?: boolean
+}
+
 export function Wallet(props: WalletProps) {
   const { t } = useTranslation()
   const [user, setUser] = useState<UserWalletData | null>(null)
@@ -106,9 +110,12 @@ export function Wallet(props: WalletProps) {
     useWaffoPancakePayment()
 
   // Fetch and refresh user data
-  const fetchUser = useCallback(async () => {
+  const fetchUser = useCallback(async (options?: FetchUserOptions) => {
+    const silent = options?.silent === true
     try {
-      setUserLoading(true)
+      if (!silent) {
+        setUserLoading(true)
+      }
       const response = await getSelf()
       if (response.success && response.data) {
         setUser(response.data as UserWalletData)
@@ -117,9 +124,16 @@ export function Wallet(props: WalletProps) {
       // eslint-disable-next-line no-console
       console.error('Failed to fetch user data:', error)
     } finally {
-      setUserLoading(false)
+      if (!silent) {
+        setUserLoading(false)
+      }
     }
   }, [])
+
+  const refreshUserSilently = useCallback(
+    () => fetchUser({ silent: true }),
+    [fetchUser]
+  )
 
   useEffect(() => {
     fetchUser()
@@ -354,6 +368,7 @@ export function Wallet(props: WalletProps) {
       <AffiliateRewardHistoryDialog
         open={rewardHistoryDialogOpen}
         onOpenChange={setRewardHistoryDialogOpen}
+        onChanged={refreshUserSilently}
       />
 
       <BillingHistoryDialog

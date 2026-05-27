@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { Ban, ChevronLeft, ChevronRight, Search } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { formatQuota } from '@/lib/format'
@@ -57,6 +57,7 @@ import { useAffiliateRewards } from '../../hooks/use-affiliate-rewards'
 import { formatTimestamp } from '../../lib/billing'
 import type {
   AffiliateRewardRecord,
+  AffiliateRewardPaymentProvider,
   AffiliateRewardSourceType,
   AffiliateRewardStatus,
   AffiliateRewardTriggerType,
@@ -65,6 +66,7 @@ import type {
 interface AffiliateRewardHistoryDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onChanged?: () => void | Promise<void>
 }
 
 const rewardStatusConfig: Record<
@@ -88,7 +90,7 @@ const sourceLabels: Record<AffiliateRewardSourceType, string> = {
   subscription_order: 'Subscription order',
 }
 
-const paymentProviderLabels: Record<string, string> = {
+const paymentProviderLabels: Record<AffiliateRewardPaymentProvider, string> = {
   epay: 'Epay',
   stripe: 'Stripe',
   creem: 'Creem',
@@ -260,6 +262,7 @@ function RewardRecordItem({
 export function AffiliateRewardHistoryDialog({
   open,
   onOpenChange,
+  onChanged,
 }: AffiliateRewardHistoryDialogProps) {
   const { t } = useTranslation()
   const isAdmin = useIsAdmin()
@@ -291,9 +294,19 @@ export function AffiliateRewardHistoryDialog({
     handlePaymentProviderChange,
     handleTimeRangeChange,
     handleVoidReward,
-  } = useAffiliateRewards({ enabled: open, admin: isAdmin })
+  } = useAffiliateRewards({ enabled: open, admin: isAdmin, onChanged })
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const handleDialogOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      onOpenChange(nextOpen)
+      if (!nextOpen) {
+        void onChanged?.()
+      }
+    },
+    [onChanged, onOpenChange]
+  )
+
   const handleConfirmVoid = async () => {
     if (!voidTarget) return
     const success = await handleVoidReward(voidTarget.id, voidReason)
@@ -305,7 +318,7 @@ export function AffiliateRewardHistoryDialog({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog open={open} onOpenChange={handleDialogOpenChange}>
         <DialogContent className='flex max-h-[calc(100dvh-2rem)] flex-col max-sm:h-dvh max-sm:w-screen max-sm:max-w-none max-sm:rounded-none max-sm:p-4 sm:max-w-5xl'>
           <DialogHeader>
             <DialogTitle>
@@ -435,7 +448,10 @@ export function AffiliateRewardHistoryDialog({
               <Select
                 value={paymentProvider}
                 onValueChange={(value) =>
-                  value !== null && handlePaymentProviderChange(value)
+                  value !== null &&
+                  handlePaymentProviderChange(
+                    value as AffiliateRewardPaymentProvider | 'all'
+                  )
                 }
               >
                 <SelectTrigger className='h-9'>

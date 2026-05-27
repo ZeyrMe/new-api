@@ -100,7 +100,7 @@ const numberFieldGroups: Array<NumberFieldConfig[]> = [
       name: 'attribution_window_days',
       labelKey: 'Attribution window days',
       descriptionKey:
-        'Recharge rewards only apply within this many days after registration. Use 0 for no limit.',
+        'First top-up rewards only apply within this many days after registration. Use 0 for no limit.',
     },
     {
       name: 'min_topup_quota',

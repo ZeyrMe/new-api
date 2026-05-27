@@ -32,6 +32,7 @@ import type {
   AffiliateRewardSummary,
   AffiliateRewardTriggerType,
   AffiliateRewardSourceType,
+  AffiliateRewardPaymentProvider,
 } from '../types'
 
 type UseAffiliateRewardsOptions = {
@@ -39,6 +40,7 @@ type UseAffiliateRewardsOptions = {
   initialPageSize?: number
   enabled?: boolean
   admin?: boolean
+  onChanged?: () => void | Promise<void>
 }
 
 export function useAffiliateRewards(options: UseAffiliateRewardsOptions = {}) {
@@ -47,6 +49,7 @@ export function useAffiliateRewards(options: UseAffiliateRewardsOptions = {}) {
     initialPageSize = 10,
     enabled = true,
     admin = false,
+    onChanged,
   } = options
   const [records, setRecords] = useState<AffiliateRewardRecord[]>([])
   const [total, setTotal] = useState(0)
@@ -61,7 +64,9 @@ export function useAffiliateRewards(options: UseAffiliateRewardsOptions = {}) {
   const [sourceType, setSourceType] = useState<
     AffiliateRewardSourceType | 'all'
   >('all')
-  const [paymentProvider, setPaymentProvider] = useState('all')
+  const [paymentProvider, setPaymentProvider] = useState<
+    AffiliateRewardPaymentProvider | 'all'
+  >('all')
   const [startTime, setStartTime] = useState<Date | undefined>()
   const [endTime, setEndTime] = useState<Date | undefined>()
   const [loading, setLoading] = useState(false)
@@ -90,6 +95,12 @@ export function useAffiliateRewards(options: UseAffiliateRewardsOptions = {}) {
         setRecords(response.data.items || [])
         setTotal(response.data.total || 0)
         setSummary(response.data.summary || null)
+        try {
+          await onChanged?.()
+        } catch (error) {
+          // eslint-disable-next-line no-console
+          console.error('Failed to sync affiliate wallet data:', error)
+        }
       } else {
         toast.error(
           response.message || i18next.t('Failed to load reward history')
@@ -113,6 +124,7 @@ export function useAffiliateRewards(options: UseAffiliateRewardsOptions = {}) {
     enabled,
     endTime,
     keyword,
+    onChanged,
     page,
     pageSize,
     paymentProvider,
@@ -161,7 +173,7 @@ export function useAffiliateRewards(options: UseAffiliateRewardsOptions = {}) {
   )
 
   const handlePaymentProviderChange = useCallback(
-    (nextPaymentProvider: string) => {
+    (nextPaymentProvider: AffiliateRewardPaymentProvider | 'all') => {
       setPaymentProvider(nextPaymentProvider)
       setPage(1)
     },

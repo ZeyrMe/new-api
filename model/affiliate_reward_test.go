@@ -218,6 +218,43 @@ func TestApplyAffiliateRewardFirstTopUpPendingSettleTransferAndIdempotency(t *te
 	assert.Greater(t, reward.TransferredAt, int64(0))
 }
 
+func TestAffiliateRewardWindowsKeepFirstAndRecurringIndependent(t *testing.T) {
+	truncateTables(t)
+	configureAffiliateRewardTest(t, func(setting *operation_setting.AffiliateSetting) {
+		setting.AttributionWindowDays = 7
+		setting.FirstRewardEnabled = true
+		setting.FirstRewardRate = 0.5
+		setting.RecurringRewardEnabled = true
+		setting.RecurringRewardRate = 0.1
+		setting.RecurringWindowDays = 90
+	})
+
+	now := common.GetTimestamp()
+	inviter := insertAffiliateUserForTest(t, 1151, "inviter_window", 0, now-40*86400)
+	invitee := insertAffiliateUserForTest(t, 1152, "invitee_window", inviter.Id, now-40*86400)
+	topup := insertAffiliateTopUpForTest(t, "window-first-outside-attribution", invitee.Id, 10, 10, PaymentProviderEpay)
+	markAffiliateTopUpSuccessForTest(t, topup, now)
+
+	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+		return ApplyAffiliateRewardOnTopUpSuccess(tx, AffiliateRewardTopUpEvent{
+			InviteeId:     invitee.Id,
+			TopupId:       topup.Id,
+			TradeNo:       topup.TradeNo,
+			BasisQuota:    1000,
+			BasisMoney:    topup.Money,
+			TriggerSource: PaymentProviderEpay,
+			CompletedAt:   topup.CompleteTime,
+		})
+	}))
+
+	assert.EqualValues(t, 1, getAffiliateRewardLogCountForTest(t))
+	var reward AffiliateRewardLog
+	require.NoError(t, DB.Where("trade_no = ?", topup.TradeNo).First(&reward).Error)
+	assert.Equal(t, AffiliateRewardTriggerRecurringTopup, reward.TriggerType)
+	assert.Equal(t, 100, reward.RewardQuota)
+	assert.Equal(t, 100, getAffiliateUserForTest(t, inviter.Id).AffQuota)
+}
+
 func TestApplyAffiliateRewardRecurringLimitsThresholdCapsAndSelfInvite(t *testing.T) {
 	truncateTables(t)
 	configureAffiliateRewardTest(t, func(setting *operation_setting.AffiliateSetting) {
@@ -278,6 +315,37 @@ func TestApplyAffiliateRewardRecurringLimitsThresholdCapsAndSelfInvite(t *testin
 	}))
 
 	assert.EqualValues(t, 2, getAffiliateRewardLogCountForTest(t))
+}
+
+func TestCreateAffiliateRewardDuplicateRewardKeyIsIdempotent(t *testing.T) {
+	truncateTables(t)
+	configureAffiliateRewardTest(t, nil)
+
+	now := common.GetTimestamp()
+	inviter := insertAffiliateUserForTest(t, 1231, "inviter_duplicate_key", 0, now)
+	invitee := insertAffiliateUserForTest(t, 1232, "invitee_duplicate_key", inviter.Id, now)
+	event := AffiliateRewardTopUpEvent{
+		InviteeId:     invitee.Id,
+		TopupId:       1,
+		TradeNo:       "duplicate-key-one",
+		BasisQuota:    1000,
+		BasisMoney:    10,
+		TriggerSource: PaymentProviderEpay,
+		CompletedAt:   now,
+	}
+
+	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+		return createAffiliateRewardTx(tx, inviter.Id, invitee.Id, event, AffiliateRewardTriggerFirstTopup, "duplicate-reward-key", 0.1, 0)
+	}))
+	event.TradeNo = "duplicate-key-two"
+	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+		return createAffiliateRewardTx(tx, inviter.Id, invitee.Id, event, AffiliateRewardTriggerFirstTopup, "duplicate-reward-key", 0.1, 0)
+	}))
+
+	assert.EqualValues(t, 1, getAffiliateRewardLogCountForTest(t))
+	reloadedInviter := getAffiliateUserForTest(t, inviter.Id)
+	assert.Equal(t, 100, reloadedInviter.AffQuota)
+	assert.Equal(t, 100, reloadedInviter.AffHistoryQuota)
 }
 
 func TestTransferAffiliateRewardPartiallyConsumesLedger(t *testing.T) {
@@ -443,6 +511,46 @@ func TestVoidAffiliateRewardReversesLedgerByStatusAndIsIdempotent(t *testing.T) 
 	assert.Equal(t, 0, reloadedInviter.Quota)
 	require.NoError(t, DB.First(&transferredReward, transferredReward.Id).Error)
 	assert.Equal(t, "chargeback transferred", transferredReward.VoidReason)
+}
+
+func TestVoidTransferredAffiliateRewardAllowsNegativeMainQuota(t *testing.T) {
+	truncateTables(t)
+	configureAffiliateRewardTest(t, nil)
+
+	now := common.GetTimestamp()
+	inviter := insertAffiliateUserForTest(t, 1283, "inviter_void_negative", 0, now)
+	invitee := insertAffiliateUserForTest(t, 1284, "invitee_void_negative", inviter.Id, now)
+	inviter.Quota = 50
+	inviter.AffHistoryQuota = 100
+	require.NoError(t, DB.Save(inviter).Error)
+	reward := insertAffiliateRewardLogForTest(t, AffiliateRewardLog{
+		RewardKey:        "void-negative",
+		InviterId:        inviter.Id,
+		InviteeId:        invitee.Id,
+		TradeNo:          "void-negative-order",
+		TriggerType:      AffiliateRewardTriggerRecurringTopup,
+		SourceType:       AffiliateRewardSourceTopup,
+		BasisQuota:       1000,
+		BasisMoney:       10,
+		RewardRate:       0.1,
+		RewardQuota:      100,
+		TransferredQuota: 100,
+		Status:           AffiliateRewardStatusTransferred,
+		EligibleAt:       now,
+		SettledAt:        now,
+		TransferredAt:    now,
+	})
+
+	_, err := VoidAffiliateReward(reward.Id, "chargeback after transfer")
+	require.NoError(t, err)
+
+	reloadedInviter := getAffiliateUserForTest(t, inviter.Id)
+	assert.Equal(t, -50, reloadedInviter.Quota)
+	assert.Equal(t, 0, reloadedInviter.AffHistoryQuota)
+	assert.Equal(t, 0, reloadedInviter.AffQuota)
+	var logCount int64
+	require.NoError(t, DB.Model(&Log{}).Where("user_id = ? AND type = ?", inviter.Id, LogTypeSystem).Count(&logCount).Error)
+	assert.EqualValues(t, 1, logCount)
 }
 
 func TestAffiliateRewardAdminFiltersAndSummary(t *testing.T) {

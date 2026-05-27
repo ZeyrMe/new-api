@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -124,10 +125,6 @@ func ApplyAffiliateRewardOnTopUpSuccess(tx *gorm.DB, event AffiliateRewardTopUpE
 	if invitee.InviterId == 0 || invitee.InviterId == invitee.Id {
 		return nil
 	}
-	if setting.AttributionWindowDays > 0 && invitee.CreatedAt > 0 &&
-		event.CompletedAt > invitee.CreatedAt+int64(setting.AttributionWindowDays)*86400 {
-		return nil
-	}
 	var tradeRewardCount int64
 	if err := tx.Model(&AffiliateRewardLog{}).Where("trade_no = ?", event.TradeNo).Count(&tradeRewardCount).Error; err != nil {
 		return err
@@ -145,7 +142,8 @@ func ApplyAffiliateRewardOnTopUpSuccess(tx *gorm.DB, event AffiliateRewardTopUpE
 	}
 
 	firstKey := fmt.Sprintf("first:%d", invitee.Id)
-	if isFirstSuccessfulOrder && setting.FirstRewardEnabled && setting.FirstRewardRate > 0 {
+	if isFirstSuccessfulOrder && setting.FirstRewardEnabled && setting.FirstRewardRate > 0 &&
+		isWithinAffiliateRewardWindow(invitee.CreatedAt, event.CompletedAt, setting.AttributionWindowDays) {
 		var firstRewardCount int64
 		if err := tx.Model(&AffiliateRewardLog{}).Where("reward_key = ?", firstKey).Count(&firstRewardCount).Error; err != nil {
 			return err
@@ -200,6 +198,10 @@ func ApplyAffiliateRewardOnTopUpSuccess(tx *gorm.DB, event AffiliateRewardTopUpE
 		triggerType = AffiliateRewardTriggerSubscription
 	}
 	return createAffiliateRewardTx(tx, invitee.InviterId, invitee.Id, event, triggerType, rewardKey, setting.RecurringRewardRate, capQuota)
+}
+
+func isWithinAffiliateRewardWindow(inviteeCreatedAt int64, completedAt int64, windowDays int) bool {
+	return windowDays <= 0 || inviteeCreatedAt <= 0 || completedAt <= inviteeCreatedAt+int64(windowDays)*86400
 }
 
 func ApplyAffiliateRewardForTopUpTx(tx *gorm.DB, topUp *TopUp, basisQuota int, triggerSource string, includeSubscription bool) error {
@@ -285,8 +287,15 @@ func createAffiliateRewardTx(tx *gorm.DB, inviterId int, inviteeId int, event Af
 		CreatedAt:       event.CompletedAt,
 		UpdatedAt:       event.CompletedAt,
 	}
-	if err := tx.Create(log).Error; err != nil {
-		return err
+	result := tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "reward_key"}},
+		DoNothing: true,
+	}).Create(log)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil
 	}
 
 	updates := map[string]interface{}{
@@ -333,6 +342,46 @@ func SettleAvailableAffiliateRewards(userId int) (int, error) {
 		if total > 0 {
 			if err := tx.Model(&User{}).Where("id = ?", userId).
 				Update("aff_quota", gorm.Expr("aff_quota + ?", total)).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return total, err
+}
+
+func SettleAllAvailableAffiliateRewards() (int, error) {
+	now := common.GetTimestamp()
+	total := 0
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var rewards []AffiliateRewardLog
+		if err := tx.Where("status = ? AND eligible_at <= ?", AffiliateRewardStatusPending, now).
+			Order("inviter_id asc, id asc").
+			Find(&rewards).Error; err != nil {
+			return err
+		}
+		quotaByInviter := make(map[int]int)
+		for _, reward := range rewards {
+			result := tx.Model(&AffiliateRewardLog{}).
+				Where("id = ? AND status = ?", reward.Id, AffiliateRewardStatusPending).
+				Updates(map[string]interface{}{
+					"status":     AffiliateRewardStatusAvailable,
+					"settled_at": now,
+				})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected > 0 {
+				total += reward.RewardQuota
+				quotaByInviter[reward.InviterId] += reward.RewardQuota
+			}
+		}
+		for inviterId, quota := range quotaByInviter {
+			if quota <= 0 {
+				continue
+			}
+			if err := tx.Model(&User{}).Where("id = ?", inviterId).
+				Update("aff_quota", gorm.Expr("aff_quota + ?", quota)).Error; err != nil {
 				return err
 			}
 		}
@@ -468,6 +517,7 @@ func VoidAffiliateReward(rewardId int, reason string) (*AffiliateRewardLog, erro
 		return nil, errors.New("void reason is too long")
 	}
 	var reward AffiliateRewardLog
+	voidedNow := false
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", rewardId).First(&reward).Error; err != nil {
 			return err
@@ -498,10 +548,21 @@ func VoidAffiliateReward(rewardId int, reason string) (*AffiliateRewardLog, erro
 		}).Error; err != nil {
 			return err
 		}
-		return tx.Where("id = ?", rewardId).First(&reward).Error
+		if err := tx.Where("id = ?", rewardId).First(&reward).Error; err != nil {
+			return err
+		}
+		voidedNow = true
+		return nil
 	})
 	if err != nil {
 		return nil, err
+	}
+	if voidedNow {
+		common.SysLog(fmt.Sprintf("affiliate reward voided reward_id=%d inviter=%d invitee=%d reward=%s transferred=%s reason=%q status=%s",
+			reward.Id, reward.InviterId, reward.InviteeId, logger.FormatQuota(reward.RewardQuota),
+			logger.FormatQuota(reward.TransferredQuota), reason, reward.Status))
+		RecordLog(reward.InviterId, LogTypeSystem, fmt.Sprintf("邀请返利已作废，奖励ID：%d，返利：%s，已转出：%s，原因：%s",
+			reward.Id, logger.LogQuota(reward.RewardQuota), logger.LogQuota(reward.TransferredQuota), reason))
 	}
 	return &reward, nil
 }
