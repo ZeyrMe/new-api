@@ -19,38 +19,84 @@ For commercial licensing, please contact support@quantumnous.com
 import { useCallback, useEffect, useState } from 'react'
 import i18next from 'i18next'
 import { toast } from 'sonner'
-import { getAffiliateRewards, isApiSuccess } from '../api'
-import type { AffiliateRewardRecord } from '../types'
+import {
+  getAdminAffiliateRewards,
+  getAffiliateRewards,
+  isApiSuccess,
+  voidAffiliateReward,
+} from '../api'
+import type {
+  AffiliateRewardFilters,
+  AffiliateRewardRecord,
+  AffiliateRewardStatus,
+  AffiliateRewardSummary,
+  AffiliateRewardTriggerType,
+  AffiliateRewardSourceType,
+} from '../types'
 
 type UseAffiliateRewardsOptions = {
   initialPage?: number
   initialPageSize?: number
   enabled?: boolean
+  admin?: boolean
 }
 
 export function useAffiliateRewards(options: UseAffiliateRewardsOptions = {}) {
-  const { initialPage = 1, initialPageSize = 10, enabled = true } = options
+  const {
+    initialPage = 1,
+    initialPageSize = 10,
+    enabled = true,
+    admin = false,
+  } = options
   const [records, setRecords] = useState<AffiliateRewardRecord[]>([])
   const [total, setTotal] = useState(0)
+  const [summary, setSummary] = useState<AffiliateRewardSummary | null>(null)
   const [page, setPage] = useState(initialPage)
   const [pageSize, setPageSize] = useState(initialPageSize)
+  const [keyword, setKeyword] = useState('')
+  const [status, setStatus] = useState<AffiliateRewardStatus | 'all'>('all')
+  const [triggerType, setTriggerType] = useState<
+    AffiliateRewardTriggerType | 'all'
+  >('all')
+  const [sourceType, setSourceType] = useState<
+    AffiliateRewardSourceType | 'all'
+  >('all')
+  const [paymentProvider, setPaymentProvider] = useState('all')
+  const [startTime, setStartTime] = useState<Date | undefined>()
+  const [endTime, setEndTime] = useState<Date | undefined>()
   const [loading, setLoading] = useState(false)
+  const [voiding, setVoiding] = useState(false)
 
   const fetchRewards = useCallback(async () => {
     if (!enabled) return
 
+    const filters: AffiliateRewardFilters = {
+      keyword,
+      status,
+      trigger_type: triggerType,
+      source_type: sourceType,
+      payment_provider: paymentProvider,
+      start_time: startTime
+        ? Math.floor(startTime.getTime() / 1000)
+        : undefined,
+      end_time: endTime ? Math.floor(endTime.getTime() / 1000) : undefined,
+    }
     setLoading(true)
     try {
-      const response = await getAffiliateRewards(page, pageSize)
+      const response = admin
+        ? await getAdminAffiliateRewards(page, pageSize, filters)
+        : await getAffiliateRewards(page, pageSize, filters)
       if (isApiSuccess(response) && response.data) {
         setRecords(response.data.items || [])
         setTotal(response.data.total || 0)
+        setSummary(response.data.summary || null)
       } else {
         toast.error(
           response.message || i18next.t('Failed to load reward history')
         )
         setRecords([])
         setTotal(0)
+        setSummary(null)
       }
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -58,10 +104,23 @@ export function useAffiliateRewards(options: UseAffiliateRewardsOptions = {}) {
       toast.error(i18next.t('Failed to load reward history'))
       setRecords([])
       setTotal(0)
+      setSummary(null)
     } finally {
       setLoading(false)
     }
-  }, [enabled, page, pageSize])
+  }, [
+    admin,
+    enabled,
+    endTime,
+    keyword,
+    page,
+    pageSize,
+    paymentProvider,
+    sourceType,
+    startTime,
+    status,
+    triggerType,
+  ])
 
   const handlePageChange = useCallback((newPage: number) => {
     setPage(newPage)
@@ -72,6 +131,80 @@ export function useAffiliateRewards(options: UseAffiliateRewardsOptions = {}) {
     setPage(1)
   }, [])
 
+  const handleSearch = useCallback((nextKeyword: string) => {
+    setKeyword(nextKeyword)
+    setPage(1)
+  }, [])
+
+  const handleStatusChange = useCallback(
+    (nextStatus: AffiliateRewardStatus | 'all') => {
+      setStatus(nextStatus)
+      setPage(1)
+    },
+    []
+  )
+
+  const handleTriggerTypeChange = useCallback(
+    (nextTriggerType: AffiliateRewardTriggerType | 'all') => {
+      setTriggerType(nextTriggerType)
+      setPage(1)
+    },
+    []
+  )
+
+  const handleSourceTypeChange = useCallback(
+    (nextSourceType: AffiliateRewardSourceType | 'all') => {
+      setSourceType(nextSourceType)
+      setPage(1)
+    },
+    []
+  )
+
+  const handlePaymentProviderChange = useCallback(
+    (nextPaymentProvider: string) => {
+      setPaymentProvider(nextPaymentProvider)
+      setPage(1)
+    },
+    []
+  )
+
+  const handleTimeRangeChange = useCallback(
+    (range: { start?: Date; end?: Date }) => {
+      setStartTime(range.start)
+      setEndTime(range.end)
+      setPage(1)
+    },
+    []
+  )
+
+  const handleVoidReward = useCallback(
+    async (id: number, reason: string) => {
+      if (!admin) {
+        toast.error(i18next.t('Admin access required'))
+        return false
+      }
+      setVoiding(true)
+      try {
+        const response = await voidAffiliateReward(id, reason)
+        if (isApiSuccess(response)) {
+          toast.success(i18next.t('Reward voided successfully'))
+          await fetchRewards()
+          return true
+        }
+        toast.error(response.message || i18next.t('Failed to void reward'))
+        return false
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to void affiliate reward:', error)
+        toast.error(i18next.t('Failed to void reward'))
+        return false
+      } finally {
+        setVoiding(false)
+      }
+    },
+    [admin, fetchRewards]
+  )
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchRewards()
@@ -80,11 +213,27 @@ export function useAffiliateRewards(options: UseAffiliateRewardsOptions = {}) {
   return {
     records,
     total,
+    summary,
     page,
     pageSize,
+    keyword,
+    status,
+    triggerType,
+    sourceType,
+    paymentProvider,
+    startTime,
+    endTime,
     loading,
+    voiding,
     handlePageChange,
     handlePageSizeChange,
+    handleSearch,
+    handleStatusChange,
+    handleTriggerTypeChange,
+    handleSourceTypeChange,
+    handlePaymentProviderChange,
+    handleTimeRangeChange,
+    handleVoidReward,
     refresh: fetchRewards,
   }
 }

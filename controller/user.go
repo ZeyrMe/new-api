@@ -398,8 +398,12 @@ func GetAffiliateRewards(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	filter, ok := buildAffiliateRewardQuery(c)
+	if !ok {
+		return
+	}
 	pageInfo := common.GetPageQuery(c)
-	rewards, total, err := model.GetUserAffiliateRewards(userId, pageInfo)
+	rewards, total, err := model.GetUserAffiliateRewards(userId, pageInfo, filter)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -407,6 +411,88 @@ func GetAffiliateRewards(c *gin.Context) {
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(rewards)
 	common.ApiSuccess(c, pageInfo)
+}
+
+func buildAffiliateRewardQuery(c *gin.Context) (model.AffiliateRewardQuery, bool) {
+	filter := model.AffiliateRewardQuery{
+		Keyword:         strings.TrimSpace(c.Query("keyword")),
+		Status:          strings.TrimSpace(c.Query("status")),
+		TriggerType:     strings.TrimSpace(c.Query("trigger_type")),
+		SourceType:      strings.TrimSpace(c.Query("source_type")),
+		PaymentProvider: strings.TrimSpace(c.Query("payment_provider")),
+	}
+	if raw := strings.TrimSpace(c.Query("start_time")); raw != "" {
+		value, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || value < 0 {
+			common.ApiErrorMsg(c, "start_time 参数错误")
+			return filter, false
+		}
+		filter.StartTime = value
+	}
+	if raw := strings.TrimSpace(c.Query("end_time")); raw != "" {
+		value, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || value < 0 {
+			common.ApiErrorMsg(c, "end_time 参数错误")
+			return filter, false
+		}
+		filter.EndTime = value
+	}
+	return filter, true
+}
+
+func GetAdminAffiliateRewards(c *gin.Context) {
+	filter, ok := buildAffiliateRewardQuery(c)
+	if !ok {
+		return
+	}
+	pageInfo := common.GetPageQuery(c)
+	rewards, total, err := model.GetAffiliateRewards(filter, pageInfo)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	summary, err := model.GetAffiliateRewardSummary(filter)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(rewards)
+	common.ApiSuccess(c, gin.H{
+		"page":      pageInfo.Page,
+		"page_size": pageInfo.PageSize,
+		"total":     pageInfo.Total,
+		"items":     pageInfo.Items,
+		"summary":   summary,
+	})
+}
+
+type VoidAffiliateRewardRequest struct {
+	Reason string `json:"reason"`
+}
+
+func VoidAffiliateReward(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		common.ApiErrorMsg(c, "参数错误")
+		return
+	}
+	var req VoidAffiliateRewardRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorMsg(c, "参数错误")
+		return
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		common.ApiErrorMsg(c, "作废原因不能为空")
+		return
+	}
+	reward, err := model.VoidAffiliateReward(id, reason)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, reward)
 }
 
 func GetSelf(c *gin.Context) {
@@ -422,6 +508,11 @@ func GetSelf(c *gin.Context) {
 		return
 	}
 	affPendingQuota, err := model.GetPendingAffiliateRewardQuota(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	affEffectiveCount, err := model.GetEffectiveAffiliateInviteeCount(id)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -454,6 +545,7 @@ func GetSelf(c *gin.Context) {
 		"request_count":       user.RequestCount,
 		"aff_code":            user.AffCode,
 		"aff_count":           user.AffCount,
+		"aff_effective_count": int(affEffectiveCount),
 		"aff_quota":           user.AffQuota,
 		"aff_available_quota": user.AffQuota,
 		"aff_pending_quota":   affPendingQuota,

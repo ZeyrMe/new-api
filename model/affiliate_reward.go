@@ -3,6 +3,8 @@ package model
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -20,6 +22,9 @@ const (
 	AffiliateRewardTriggerFirstTopup     = "first_topup"
 	AffiliateRewardTriggerRecurringTopup = "recurring_topup"
 	AffiliateRewardTriggerSubscription   = "subscription_order"
+
+	AffiliateRewardSourceTopup        = "topup"
+	AffiliateRewardSourceSubscription = "subscription_order"
 )
 
 type AffiliateRewardLog struct {
@@ -30,6 +35,8 @@ type AffiliateRewardLog struct {
 	TopupId          int     `json:"topup_id" gorm:"index"`
 	TradeNo          string  `json:"trade_no" gorm:"type:varchar(255);index"`
 	TriggerType      string  `json:"trigger_type" gorm:"type:varchar(32);index"`
+	SourceType       string  `json:"source_type" gorm:"type:varchar(32);index"`
+	PaymentProvider  string  `json:"payment_provider" gorm:"type:varchar(50);index"`
 	BasisQuota       int     `json:"basis_quota"`
 	BasisMoney       float64 `json:"basis_money"`
 	RewardRate       float64 `json:"reward_rate"`
@@ -38,6 +45,7 @@ type AffiliateRewardLog struct {
 	Status           string  `json:"status" gorm:"type:varchar(32);index"`
 	EligibleAt       int64   `json:"eligible_at" gorm:"index"`
 	SettledAt        int64   `json:"settled_at"`
+	TransferredAt    int64   `json:"transferred_at"`
 	VoidReason       string  `json:"void_reason" gorm:"type:varchar(255)"`
 	CreatedAt        int64   `json:"created_at" gorm:"bigint;index"`
 	UpdatedAt        int64   `json:"updated_at" gorm:"bigint"`
@@ -68,6 +76,27 @@ type AffiliateRewardTopUpEvent struct {
 	TriggerSource       string
 	CompletedAt         int64
 	IncludeSubscription bool
+}
+
+type AffiliateRewardQuery struct {
+	InviterId       int
+	Keyword         string
+	Status          string
+	TriggerType     string
+	SourceType      string
+	PaymentProvider string
+	StartTime       int64
+	EndTime         int64
+}
+
+type AffiliateRewardSummary struct {
+	TotalRewardQuota       int64 `json:"total_reward_quota"`
+	PendingRewardQuota     int64 `json:"pending_reward_quota"`
+	AvailableRewardQuota   int64 `json:"available_reward_quota"`
+	TransferredRewardQuota int64 `json:"transferred_reward_quota"`
+	VoidedRewardQuota      int64 `json:"voided_reward_quota"`
+	EffectiveInviteeCount  int64 `json:"effective_invitee_count"`
+	TotalRecords           int64 `json:"total_records"`
 }
 
 func ApplyAffiliateRewardOnTopUpSuccess(tx *gorm.DB, event AffiliateRewardTopUpEvent) error {
@@ -232,23 +261,29 @@ func createAffiliateRewardTx(tx *gorm.DB, inviterId int, inviteeId int, event Af
 		eligibleAt = event.CompletedAt + int64(delayDays)*86400
 		settledAt = 0
 	}
+	sourceType := AffiliateRewardSourceTopup
+	if event.IncludeSubscription {
+		sourceType = AffiliateRewardSourceSubscription
+	}
 
 	log := &AffiliateRewardLog{
-		RewardKey:   rewardKey,
-		InviterId:   inviterId,
-		InviteeId:   inviteeId,
-		TopupId:     event.TopupId,
-		TradeNo:     event.TradeNo,
-		TriggerType: triggerType,
-		BasisQuota:  event.BasisQuota,
-		BasisMoney:  event.BasisMoney,
-		RewardRate:  rate,
-		RewardQuota: rewardQuota,
-		Status:      status,
-		EligibleAt:  eligibleAt,
-		SettledAt:   settledAt,
-		CreatedAt:   event.CompletedAt,
-		UpdatedAt:   event.CompletedAt,
+		RewardKey:       rewardKey,
+		InviterId:       inviterId,
+		InviteeId:       inviteeId,
+		TopupId:         event.TopupId,
+		TradeNo:         event.TradeNo,
+		TriggerType:     triggerType,
+		SourceType:      sourceType,
+		PaymentProvider: event.TriggerSource,
+		BasisQuota:      event.BasisQuota,
+		BasisMoney:      event.BasisMoney,
+		RewardRate:      rate,
+		RewardQuota:     rewardQuota,
+		Status:          status,
+		EligibleAt:      eligibleAt,
+		SettledAt:       settledAt,
+		CreatedAt:       event.CompletedAt,
+		UpdatedAt:       event.CompletedAt,
 	}
 	if err := tx.Create(log).Error; err != nil {
 		return err
@@ -314,10 +349,68 @@ func GetPendingAffiliateRewardQuota(userId int) (int, error) {
 	return int(total), err
 }
 
-func GetUserAffiliateRewards(userId int, pageInfo *common.PageInfo) ([]*AffiliateRewardLog, int64, error) {
+func GetEffectiveAffiliateInviteeCount(userId int) (int64, error) {
+	if userId <= 0 {
+		return 0, nil
+	}
+	var count int64
+	err := DB.Model(&AffiliateRewardLog{}).
+		Where("inviter_id = ? AND status <> ?", userId, AffiliateRewardStatusVoided).
+		Distinct("invitee_id").
+		Count(&count).Error
+	return count, err
+}
+
+func escapeAffiliateLike(keyword string) string {
+	keyword = strings.ReplaceAll(keyword, "!", "!!")
+	keyword = strings.ReplaceAll(keyword, "%", "!%")
+	keyword = strings.ReplaceAll(keyword, "_", "!_")
+	return "%" + keyword + "%"
+}
+
+func applyAffiliateRewardQuery(query *gorm.DB, filter AffiliateRewardQuery) *gorm.DB {
+	if filter.InviterId > 0 {
+		query = query.Where("inviter_id = ?", filter.InviterId)
+	}
+	if keyword := strings.TrimSpace(filter.Keyword); keyword != "" {
+		pattern := escapeAffiliateLike(keyword)
+		if numericValue, err := strconv.Atoi(keyword); err == nil {
+			query = query.Where(
+				"(reward_key LIKE ? ESCAPE '!' OR trade_no LIKE ? ESCAPE '!' OR void_reason LIKE ? ESCAPE '!' OR id = ? OR inviter_id = ? OR invitee_id = ? OR topup_id = ?)",
+				pattern, pattern, pattern, numericValue, numericValue, numericValue, numericValue,
+			)
+		} else {
+			query = query.Where(
+				"(reward_key LIKE ? ESCAPE '!' OR trade_no LIKE ? ESCAPE '!' OR void_reason LIKE ? ESCAPE '!')",
+				pattern, pattern, pattern,
+			)
+		}
+	}
+	if status := strings.TrimSpace(filter.Status); status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if triggerType := strings.TrimSpace(filter.TriggerType); triggerType != "" {
+		query = query.Where("trigger_type = ?", triggerType)
+	}
+	if sourceType := strings.TrimSpace(filter.SourceType); sourceType != "" {
+		query = query.Where("source_type = ?", sourceType)
+	}
+	if paymentProvider := strings.TrimSpace(filter.PaymentProvider); paymentProvider != "" {
+		query = query.Where("payment_provider = ?", paymentProvider)
+	}
+	if filter.StartTime > 0 {
+		query = query.Where("created_at >= ?", filter.StartTime)
+	}
+	if filter.EndTime > 0 {
+		query = query.Where("created_at <= ?", filter.EndTime)
+	}
+	return query
+}
+
+func GetAffiliateRewards(filter AffiliateRewardQuery, pageInfo *common.PageInfo) ([]*AffiliateRewardLog, int64, error) {
 	var rewards []*AffiliateRewardLog
 	var total int64
-	query := DB.Model(&AffiliateRewardLog{}).Where("inviter_id = ?", userId)
+	query := applyAffiliateRewardQuery(DB.Model(&AffiliateRewardLog{}), filter)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
@@ -328,6 +421,89 @@ func GetUserAffiliateRewards(userId int, pageInfo *common.PageInfo) ([]*Affiliat
 		return nil, 0, err
 	}
 	return rewards, total, nil
+}
+
+func GetAffiliateRewardSummary(filter AffiliateRewardQuery) (*AffiliateRewardSummary, error) {
+	query := applyAffiliateRewardQuery(DB.Model(&AffiliateRewardLog{}), filter)
+	var summary AffiliateRewardSummary
+	err := query.Select(
+		`COALESCE(SUM(CASE WHEN status <> ? THEN reward_quota ELSE 0 END), 0) AS total_reward_quota,
+		COALESCE(SUM(CASE WHEN status = ? THEN reward_quota ELSE 0 END), 0) AS pending_reward_quota,
+		COALESCE(SUM(CASE WHEN status = ? THEN reward_quota - transferred_quota ELSE 0 END), 0) AS available_reward_quota,
+		COALESCE(SUM(CASE WHEN status <> ? THEN transferred_quota ELSE 0 END), 0) AS transferred_reward_quota,
+		COALESCE(SUM(CASE WHEN status = ? THEN reward_quota ELSE 0 END), 0) AS voided_reward_quota,
+		COUNT(*) AS total_records`,
+		AffiliateRewardStatusVoided,
+		AffiliateRewardStatusPending,
+		AffiliateRewardStatusAvailable,
+		AffiliateRewardStatusVoided,
+		AffiliateRewardStatusVoided,
+	).Scan(&summary).Error
+	if err != nil {
+		return nil, err
+	}
+	countQuery := applyAffiliateRewardQuery(DB.Model(&AffiliateRewardLog{}), filter).
+		Where("status <> ?", AffiliateRewardStatusVoided).
+		Distinct("invitee_id")
+	if err := countQuery.Count(&summary.EffectiveInviteeCount).Error; err != nil {
+		return nil, err
+	}
+	return &summary, nil
+}
+
+func GetUserAffiliateRewards(userId int, pageInfo *common.PageInfo, filter AffiliateRewardQuery) ([]*AffiliateRewardLog, int64, error) {
+	filter.InviterId = userId
+	return GetAffiliateRewards(filter, pageInfo)
+}
+
+func VoidAffiliateReward(rewardId int, reason string) (*AffiliateRewardLog, error) {
+	if rewardId <= 0 {
+		return nil, errors.New("invalid reward id")
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return nil, errors.New("void reason is required")
+	}
+	if len(reason) > 255 {
+		return nil, errors.New("void reason is too long")
+	}
+	var reward AffiliateRewardLog
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", rewardId).First(&reward).Error; err != nil {
+			return err
+		}
+		if reward.Status == AffiliateRewardStatusVoided {
+			return nil
+		}
+
+		untransferredQuota := reward.RewardQuota - reward.TransferredQuota
+		if untransferredQuota < 0 {
+			untransferredQuota = 0
+		}
+		userUpdates := map[string]interface{}{
+			"aff_history": gorm.Expr("aff_history - ?", reward.RewardQuota),
+		}
+		if reward.Status == AffiliateRewardStatusAvailable && untransferredQuota > 0 {
+			userUpdates["aff_quota"] = gorm.Expr("aff_quota - ?", untransferredQuota)
+		}
+		if reward.TransferredQuota > 0 {
+			userUpdates["quota"] = gorm.Expr("quota - ?", reward.TransferredQuota)
+		}
+		if err := tx.Model(&User{}).Where("id = ?", reward.InviterId).Updates(userUpdates).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&AffiliateRewardLog{}).Where("id = ?", reward.Id).Updates(map[string]interface{}{
+			"status":      AffiliateRewardStatusVoided,
+			"void_reason": reason,
+		}).Error; err != nil {
+			return err
+		}
+		return tx.Where("id = ?", rewardId).First(&reward).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &reward, nil
 }
 
 func MarkAffiliateRewardsTransferredTx(tx *gorm.DB, userId int, quota int) error {
@@ -355,10 +531,10 @@ func MarkAffiliateRewardsTransferredTx(tx *gorm.DB, userId int, quota int) error
 		newTransferredQuota := reward.TransferredQuota + consumeQuota
 		updates := map[string]interface{}{
 			"transferred_quota": newTransferredQuota,
+			"transferred_at":    now,
 		}
 		if newTransferredQuota >= reward.RewardQuota {
 			updates["status"] = AffiliateRewardStatusTransferred
-			updates["settled_at"] = now
 		}
 		result := tx.Model(&AffiliateRewardLog{}).
 			Where("id = ? AND status = ? AND transferred_quota = ?", reward.Id, AffiliateRewardStatusAvailable, reward.TransferredQuota).

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -85,7 +87,7 @@ func setupModelListControllerTestDB(t *testing.T) *gorm.DB {
 	model.DB = db
 	model.LOG_DB = db
 
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Ability{}, &model.Model{}, &model.Vendor{}, &model.AffiliateRewardLog{}))
 	model.InvalidatePricingCache()
 
 	t.Cleanup(func() {
@@ -193,6 +195,142 @@ func pricingByModelName(pricings []model.Pricing) map[string]model.Pricing {
 		byName[pricing.ModelName] = pricing
 	}
 	return byName
+}
+
+type adminAffiliateRewardsResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Page     int                          `json:"page"`
+		PageSize int                          `json:"page_size"`
+		Total    int                          `json:"total"`
+		Items    []model.AffiliateRewardLog   `json:"items"`
+		Summary  model.AffiliateRewardSummary `json:"summary"`
+	} `json:"data"`
+}
+
+func insertControllerAffiliateUser(t *testing.T, db *gorm.DB, id int, username string, inviterId int) model.User {
+	t.Helper()
+	user := model.User{
+		Id:        id,
+		Username:  username,
+		Status:    common.UserStatusEnabled,
+		Group:     "default",
+		AffCode:   fmt.Sprintf("AFF%d", id),
+		InviterId: inviterId,
+	}
+	require.NoError(t, db.Create(&user).Error)
+	return user
+}
+
+func insertControllerAffiliateReward(t *testing.T, db *gorm.DB, reward model.AffiliateRewardLog) model.AffiliateRewardLog {
+	t.Helper()
+	if reward.CreatedAt == 0 {
+		reward.CreatedAt = common.GetTimestamp()
+	}
+	if reward.UpdatedAt == 0 {
+		reward.UpdatedAt = reward.CreatedAt
+	}
+	require.NoError(t, db.Create(&reward).Error)
+	return reward
+}
+
+func TestGetAdminAffiliateRewardsFiltersAndSummarizes(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	now := common.GetTimestamp()
+	inviter := insertControllerAffiliateUser(t, db, 9101, "admin_aff_inviter", 0)
+	invitee := insertControllerAffiliateUser(t, db, 9102, "admin_aff_invitee", inviter.Id)
+	otherInvitee := insertControllerAffiliateUser(t, db, 9103, "admin_aff_other_invitee", inviter.Id)
+
+	insertControllerAffiliateReward(t, db, model.AffiliateRewardLog{
+		RewardKey:        "controller-admin-stripe",
+		InviterId:        inviter.Id,
+		InviteeId:        invitee.Id,
+		TradeNo:          "controller-admin-stripe-order",
+		TriggerType:      model.AffiliateRewardTriggerSubscription,
+		SourceType:       model.AffiliateRewardSourceSubscription,
+		PaymentProvider:  model.PaymentProviderStripe,
+		RewardQuota:      300,
+		Status:           model.AffiliateRewardStatusTransferred,
+		TransferredQuota: 300,
+		CreatedAt:        now - 10,
+	})
+	insertControllerAffiliateReward(t, db, model.AffiliateRewardLog{
+		RewardKey:       "controller-admin-epay",
+		InviterId:       inviter.Id,
+		InviteeId:       otherInvitee.Id,
+		TradeNo:         "controller-admin-epay-order",
+		TriggerType:     model.AffiliateRewardTriggerFirstTopup,
+		SourceType:      model.AffiliateRewardSourceTopup,
+		PaymentProvider: model.PaymentProviderEpay,
+		RewardQuota:     100,
+		Status:          model.AffiliateRewardStatusPending,
+		CreatedAt:       now - 5,
+	})
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/api/user/aff_rewards/admin?p=1&page_size=10&payment_provider=stripe", nil)
+
+	GetAdminAffiliateRewards(context)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload adminAffiliateRewardsResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.Equal(t, 1, payload.Data.Page)
+	require.Equal(t, 10, payload.Data.PageSize)
+	require.Equal(t, 1, payload.Data.Total)
+	require.Len(t, payload.Data.Items, 1)
+	assert.Equal(t, model.PaymentProviderStripe, payload.Data.Items[0].PaymentProvider)
+	assert.EqualValues(t, 300, payload.Data.Summary.TotalRewardQuota)
+	assert.EqualValues(t, 300, payload.Data.Summary.TransferredRewardQuota)
+	assert.EqualValues(t, 1, payload.Data.Summary.EffectiveInviteeCount)
+}
+
+func TestVoidAffiliateRewardHandlerReversesLedger(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	now := common.GetTimestamp()
+	inviter := insertControllerAffiliateUser(t, db, 9111, "admin_void_inviter", 0)
+	invitee := insertControllerAffiliateUser(t, db, 9112, "admin_void_invitee", inviter.Id)
+	inviter.AffQuota = 70
+	inviter.AffHistoryQuota = 100
+	inviter.Quota = 30
+	require.NoError(t, db.Save(&inviter).Error)
+
+	reward := insertControllerAffiliateReward(t, db, model.AffiliateRewardLog{
+		RewardKey:        "controller-void-partial",
+		InviterId:        inviter.Id,
+		InviteeId:        invitee.Id,
+		TradeNo:          "controller-void-partial-order",
+		TriggerType:      model.AffiliateRewardTriggerRecurringTopup,
+		SourceType:       model.AffiliateRewardSourceTopup,
+		PaymentProvider:  model.PaymentProviderEpay,
+		RewardQuota:      100,
+		TransferredQuota: 30,
+		Status:           model.AffiliateRewardStatusAvailable,
+		EligibleAt:       now,
+		SettledAt:        now,
+		TransferredAt:    now,
+	})
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Params = gin.Params{{Key: "id", Value: strconv.Itoa(reward.Id)}}
+	context.Request = httptest.NewRequest(http.MethodPost, "/api/user/aff_rewards/1/void", strings.NewReader(`{"reason":"chargeback"}`))
+	context.Request.Header.Set("Content-Type", "application/json")
+
+	VoidAffiliateReward(context)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var reloadedInviter model.User
+	require.NoError(t, db.Where("id = ?", inviter.Id).First(&reloadedInviter).Error)
+	assert.Equal(t, 0, reloadedInviter.AffQuota)
+	assert.Equal(t, 0, reloadedInviter.AffHistoryQuota)
+	assert.Equal(t, 0, reloadedInviter.Quota)
+	var reloadedReward model.AffiliateRewardLog
+	require.NoError(t, db.First(&reloadedReward, reward.Id).Error)
+	assert.Equal(t, model.AffiliateRewardStatusVoided, reloadedReward.Status)
+	assert.Equal(t, "chargeback", reloadedReward.VoidReason)
 }
 
 func TestListModelsIncludesTieredBillingModel(t *testing.T) {

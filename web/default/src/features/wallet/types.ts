@@ -244,6 +244,8 @@ export interface UserWalletData {
   aff_history_quota: number
   /** Number of successful affiliate invites */
   aff_count: number
+  /** Number of referrals that generated non-voided rewards */
+  aff_effective_count?: number
   /** User group */
   group: string
 }
@@ -296,6 +298,8 @@ export type AffiliateRewardTriggerType =
   | 'recurring_topup'
   | 'subscription_order'
 
+export type AffiliateRewardSourceType = 'topup' | 'subscription_order'
+
 export interface AffiliateRewardRecord {
   id: number
   reward_key: string
@@ -304,6 +308,8 @@ export interface AffiliateRewardRecord {
   topup_id: number
   trade_no: string
   trigger_type: AffiliateRewardTriggerType
+  source_type?: AffiliateRewardSourceType | ''
+  payment_provider?: string
   basis_quota: number
   basis_money: number
   reward_rate: number
@@ -312,14 +318,38 @@ export interface AffiliateRewardRecord {
   status: AffiliateRewardStatus
   eligible_at: number
   settled_at: number
+  transferred_at?: number
   void_reason: string
   created_at: number
   updated_at: number
 }
 
+export interface AffiliateRewardFilters {
+  keyword?: string
+  status?: AffiliateRewardStatus | 'all'
+  trigger_type?: AffiliateRewardTriggerType | 'all'
+  source_type?: AffiliateRewardSourceType | 'all'
+  payment_provider?: string
+  start_time?: number
+  end_time?: number
+}
+
+export interface AffiliateRewardSummary {
+  total_reward_quota: number
+  pending_reward_quota: number
+  available_reward_quota: number
+  transferred_reward_quota: number
+  voided_reward_quota: number
+  effective_invitee_count: number
+  total_records: number
+}
+
 export interface AffiliateRewardsResponse {
   items: AffiliateRewardRecord[]
   total: number
+  page?: number
+  page_size?: number
+  summary?: AffiliateRewardSummary
 }
 
 /**

@@ -82,11 +82,15 @@ export function AffiliateRewardsCard({
           </div>
         </div>
 
-        <div className='grid grid-cols-2 gap-2 text-center sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4'>
+        <div className='grid grid-cols-2 gap-2 text-center sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-5'>
           {[
             [t('Available Rewards'), formatQuota(availableQuota)],
             [t('Pending Settlement'), formatQuota(pendingQuota)],
             [t('Total Earned'), formatQuota(user?.aff_history_quota ?? 0)],
+            [
+              t('Effective Referrals'),
+              String(user?.aff_effective_count ?? 0),
+            ],
             [t('Invites'), String(user?.aff_count ?? 0)],
           ].map(([label, value]) => (
             <div key={label}>

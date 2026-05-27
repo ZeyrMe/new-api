@@ -102,6 +102,18 @@ func getAffiliateUserForTest(t *testing.T, id int) User {
 	return user
 }
 
+func insertAffiliateRewardLogForTest(t *testing.T, reward AffiliateRewardLog) AffiliateRewardLog {
+	t.Helper()
+	if reward.CreatedAt == 0 {
+		reward.CreatedAt = common.GetTimestamp()
+	}
+	if reward.UpdatedAt == 0 {
+		reward.UpdatedAt = reward.CreatedAt
+	}
+	require.NoError(t, DB.Create(&reward).Error)
+	return reward
+}
+
 func TestUserInsertBindsInviterAndGrantsRegistrationReward(t *testing.T) {
 	truncateTables(t)
 	configureAffiliateRewardTest(t, nil)
@@ -177,13 +189,23 @@ func TestApplyAffiliateRewardFirstTopUpPendingSettleTransferAndIdempotency(t *te
 	var reward AffiliateRewardLog
 	require.NoError(t, DB.Where("reward_key = ?", fmt.Sprintf("first:%d", invitee.Id)).First(&reward).Error)
 	assert.Equal(t, AffiliateRewardStatusPending, reward.Status)
+	assert.Equal(t, AffiliateRewardTriggerFirstTopup, reward.TriggerType)
+	assert.Equal(t, AffiliateRewardSourceTopup, reward.SourceType)
+	assert.Equal(t, PaymentProviderEpay, reward.PaymentProvider)
 	assert.Equal(t, 100, reward.RewardQuota)
+	assert.EqualValues(t, 0, reward.SettledAt)
+	assert.EqualValues(t, 0, reward.TransferredAt)
 
 	settled, err := SettleAvailableAffiliateRewards(inviter.Id)
 	require.NoError(t, err)
 	assert.Equal(t, 100, settled)
 	reloadedInviter = getAffiliateUserForTest(t, inviter.Id)
 	assert.Equal(t, 100, reloadedInviter.AffQuota)
+	require.NoError(t, DB.First(&reward, reward.Id).Error)
+	settledAt := reward.SettledAt
+	assert.Equal(t, AffiliateRewardStatusAvailable, reward.Status)
+	assert.Greater(t, settledAt, int64(0))
+	assert.EqualValues(t, 0, reward.TransferredAt)
 
 	require.NoError(t, reloadedInviter.TransferAffQuotaToQuota(100))
 	reloadedInviter = getAffiliateUserForTest(t, inviter.Id)
@@ -192,6 +214,8 @@ func TestApplyAffiliateRewardFirstTopUpPendingSettleTransferAndIdempotency(t *te
 	require.NoError(t, DB.First(&reward, reward.Id).Error)
 	assert.Equal(t, AffiliateRewardStatusTransferred, reward.Status)
 	assert.Equal(t, 100, reward.TransferredQuota)
+	assert.Equal(t, settledAt, reward.SettledAt)
+	assert.Greater(t, reward.TransferredAt, int64(0))
 }
 
 func TestApplyAffiliateRewardRecurringLimitsThresholdCapsAndSelfInvite(t *testing.T) {
@@ -292,6 +316,8 @@ func TestTransferAffiliateRewardPartiallyConsumesLedger(t *testing.T) {
 	require.NoError(t, DB.First(reward, reward.Id).Error)
 	assert.Equal(t, AffiliateRewardStatusAvailable, reward.Status)
 	assert.Equal(t, 40, reward.TransferredQuota)
+	assert.Greater(t, reward.TransferredAt, int64(0))
+	firstTransferredAt := reward.TransferredAt
 
 	require.NoError(t, reloadedInviter.TransferAffQuotaToQuota(60))
 	reloadedInviter = getAffiliateUserForTest(t, inviter.Id)
@@ -300,6 +326,256 @@ func TestTransferAffiliateRewardPartiallyConsumesLedger(t *testing.T) {
 	require.NoError(t, DB.First(reward, reward.Id).Error)
 	assert.Equal(t, AffiliateRewardStatusTransferred, reward.Status)
 	assert.Equal(t, 100, reward.TransferredQuota)
+	assert.GreaterOrEqual(t, reward.TransferredAt, firstTransferredAt)
+}
+
+func TestVoidAffiliateRewardReversesLedgerByStatusAndIsIdempotent(t *testing.T) {
+	truncateTables(t)
+	configureAffiliateRewardTest(t, nil)
+
+	now := common.GetTimestamp()
+	inviter := insertAffiliateUserForTest(t, 1281, "inviter_void", 0, now)
+	invitee := insertAffiliateUserForTest(t, 1282, "invitee_void", inviter.Id, now)
+	inviter.AffQuota = 380
+	inviter.AffHistoryQuota = 1000
+	inviter.Quota = 520
+	require.NoError(t, DB.Save(inviter).Error)
+
+	pendingReward := insertAffiliateRewardLogForTest(t, AffiliateRewardLog{
+		RewardKey:   "void-pending",
+		InviterId:   inviter.Id,
+		InviteeId:   invitee.Id,
+		TradeNo:     "void-pending-order",
+		TriggerType: AffiliateRewardTriggerFirstTopup,
+		SourceType:  AffiliateRewardSourceTopup,
+		BasisQuota:  1000,
+		BasisMoney:  10,
+		RewardRate:  0.1,
+		RewardQuota: 100,
+		Status:      AffiliateRewardStatusPending,
+		EligibleAt:  now + 86400,
+	})
+	availableReward := insertAffiliateRewardLogForTest(t, AffiliateRewardLog{
+		RewardKey:   "void-available",
+		InviterId:   inviter.Id,
+		InviteeId:   invitee.Id,
+		TradeNo:     "void-available-order",
+		TriggerType: AffiliateRewardTriggerRecurringTopup,
+		SourceType:  AffiliateRewardSourceTopup,
+		BasisQuota:  1000,
+		BasisMoney:  10,
+		RewardRate:  0.2,
+		RewardQuota: 200,
+		Status:      AffiliateRewardStatusAvailable,
+		EligibleAt:  now,
+		SettledAt:   now,
+	})
+	partialReward := insertAffiliateRewardLogForTest(t, AffiliateRewardLog{
+		RewardKey:        "void-partial",
+		InviterId:        inviter.Id,
+		InviteeId:        invitee.Id,
+		TradeNo:          "void-partial-order",
+		TriggerType:      AffiliateRewardTriggerRecurringTopup,
+		SourceType:       AffiliateRewardSourceTopup,
+		BasisQuota:       1000,
+		BasisMoney:       10,
+		RewardRate:       0.3,
+		RewardQuota:      300,
+		TransferredQuota: 120,
+		Status:           AffiliateRewardStatusAvailable,
+		EligibleAt:       now,
+		SettledAt:        now,
+		TransferredAt:    now,
+	})
+	transferredReward := insertAffiliateRewardLogForTest(t, AffiliateRewardLog{
+		RewardKey:        "void-transferred",
+		InviterId:        inviter.Id,
+		InviteeId:        invitee.Id,
+		TradeNo:          "void-transferred-order",
+		TriggerType:      AffiliateRewardTriggerSubscription,
+		SourceType:       AffiliateRewardSourceSubscription,
+		BasisQuota:       1000,
+		BasisMoney:       10,
+		RewardRate:       0.4,
+		RewardQuota:      400,
+		TransferredQuota: 400,
+		Status:           AffiliateRewardStatusTransferred,
+		EligibleAt:       now,
+		SettledAt:        now,
+		TransferredAt:    now,
+	})
+
+	reward, err := VoidAffiliateReward(pendingReward.Id, "chargeback pending")
+	require.NoError(t, err)
+	assert.Equal(t, AffiliateRewardStatusVoided, reward.Status)
+	assert.Equal(t, "chargeback pending", reward.VoidReason)
+	reloadedInviter := getAffiliateUserForTest(t, inviter.Id)
+	assert.Equal(t, 380, reloadedInviter.AffQuota)
+	assert.Equal(t, 900, reloadedInviter.AffHistoryQuota)
+	assert.Equal(t, 520, reloadedInviter.Quota)
+
+	_, err = VoidAffiliateReward(availableReward.Id, "chargeback available")
+	require.NoError(t, err)
+	reloadedInviter = getAffiliateUserForTest(t, inviter.Id)
+	assert.Equal(t, 180, reloadedInviter.AffQuota)
+	assert.Equal(t, 700, reloadedInviter.AffHistoryQuota)
+	assert.Equal(t, 520, reloadedInviter.Quota)
+
+	_, err = VoidAffiliateReward(partialReward.Id, "chargeback partial")
+	require.NoError(t, err)
+	reloadedInviter = getAffiliateUserForTest(t, inviter.Id)
+	assert.Equal(t, 0, reloadedInviter.AffQuota)
+	assert.Equal(t, 400, reloadedInviter.AffHistoryQuota)
+	assert.Equal(t, 400, reloadedInviter.Quota)
+
+	_, err = VoidAffiliateReward(transferredReward.Id, "chargeback transferred")
+	require.NoError(t, err)
+	reloadedInviter = getAffiliateUserForTest(t, inviter.Id)
+	assert.Equal(t, 0, reloadedInviter.AffQuota)
+	assert.Equal(t, 0, reloadedInviter.AffHistoryQuota)
+	assert.Equal(t, 0, reloadedInviter.Quota)
+
+	_, err = VoidAffiliateReward(transferredReward.Id, "second void ignored")
+	require.NoError(t, err)
+	reloadedInviter = getAffiliateUserForTest(t, inviter.Id)
+	assert.Equal(t, 0, reloadedInviter.AffQuota)
+	assert.Equal(t, 0, reloadedInviter.AffHistoryQuota)
+	assert.Equal(t, 0, reloadedInviter.Quota)
+	require.NoError(t, DB.First(&transferredReward, transferredReward.Id).Error)
+	assert.Equal(t, "chargeback transferred", transferredReward.VoidReason)
+}
+
+func TestAffiliateRewardAdminFiltersAndSummary(t *testing.T) {
+	truncateTables(t)
+	configureAffiliateRewardTest(t, nil)
+
+	now := common.GetTimestamp()
+	inviter := insertAffiliateUserForTest(t, 1291, "inviter_filter", 0, now)
+	otherInviter := insertAffiliateUserForTest(t, 1292, "other_inviter_filter", 0, now)
+	inviteeOne := insertAffiliateUserForTest(t, 1293, "invitee_filter_one", inviter.Id, now)
+	inviteeTwo := insertAffiliateUserForTest(t, 1294, "invitee_filter_two", inviter.Id, now)
+	inviteeVoided := insertAffiliateUserForTest(t, 1295, "invitee_filter_voided", inviter.Id, now)
+	otherInvitee := insertAffiliateUserForTest(t, 1296, "other_invitee_filter", otherInviter.Id, now)
+
+	insertAffiliateRewardLogForTest(t, AffiliateRewardLog{
+		RewardKey:       "filter-pending",
+		InviterId:       inviter.Id,
+		InviteeId:       inviteeOne.Id,
+		TradeNo:         "filter-pending-order",
+		TriggerType:     AffiliateRewardTriggerFirstTopup,
+		SourceType:      AffiliateRewardSourceTopup,
+		PaymentProvider: PaymentProviderEpay,
+		RewardQuota:     100,
+		Status:          AffiliateRewardStatusPending,
+		EligibleAt:      now + 86400,
+		CreatedAt:       now - 100,
+	})
+	insertAffiliateRewardLogForTest(t, AffiliateRewardLog{
+		RewardKey:        "filter-available",
+		InviterId:        inviter.Id,
+		InviteeId:        inviteeTwo.Id,
+		TradeNo:          "filter-available-order",
+		TriggerType:      AffiliateRewardTriggerRecurringTopup,
+		SourceType:       AffiliateRewardSourceTopup,
+		PaymentProvider:  PaymentProviderStripe,
+		RewardQuota:      200,
+		TransferredQuota: 50,
+		Status:           AffiliateRewardStatusAvailable,
+		EligibleAt:       now,
+		SettledAt:        now,
+		CreatedAt:        now - 90,
+	})
+	insertAffiliateRewardLogForTest(t, AffiliateRewardLog{
+		RewardKey:        "filter-subscription",
+		InviterId:        inviter.Id,
+		InviteeId:        inviteeTwo.Id,
+		TradeNo:          "filter-subscription-order",
+		TriggerType:      AffiliateRewardTriggerSubscription,
+		SourceType:       AffiliateRewardSourceSubscription,
+		PaymentProvider:  PaymentProviderStripe,
+		RewardQuota:      300,
+		TransferredQuota: 300,
+		Status:           AffiliateRewardStatusTransferred,
+		EligibleAt:       now,
+		SettledAt:        now,
+		TransferredAt:    now,
+		CreatedAt:        now - 80,
+	})
+	insertAffiliateRewardLogForTest(t, AffiliateRewardLog{
+		RewardKey:        "filter-voided",
+		InviterId:        inviter.Id,
+		InviteeId:        inviteeVoided.Id,
+		TradeNo:          "filter-voided-order",
+		TriggerType:      AffiliateRewardTriggerRecurringTopup,
+		SourceType:       AffiliateRewardSourceTopup,
+		PaymentProvider:  PaymentProviderCreem,
+		RewardQuota:      400,
+		TransferredQuota: 100,
+		Status:           AffiliateRewardStatusVoided,
+		EligibleAt:       now,
+		SettledAt:        now,
+		TransferredAt:    now,
+		VoidReason:       "chargeback",
+		CreatedAt:        now - 70,
+	})
+	insertAffiliateRewardLogForTest(t, AffiliateRewardLog{
+		RewardKey:       "filter-other",
+		InviterId:       otherInviter.Id,
+		InviteeId:       otherInvitee.Id,
+		TradeNo:         "filter-other-order",
+		TriggerType:     AffiliateRewardTriggerRecurringTopup,
+		SourceType:      AffiliateRewardSourceTopup,
+		PaymentProvider: PaymentProviderEpay,
+		RewardQuota:     500,
+		Status:          AffiliateRewardStatusAvailable,
+		EligibleAt:      now,
+		SettledAt:       now,
+		CreatedAt:       now - 60,
+	})
+
+	pageInfo := &common.PageInfo{Page: 1, PageSize: 10}
+	userRewards, total, err := GetUserAffiliateRewards(inviter.Id, pageInfo, AffiliateRewardQuery{})
+	require.NoError(t, err)
+	assert.EqualValues(t, 4, total)
+	require.Len(t, userRewards, 4)
+	for _, reward := range userRewards {
+		assert.Equal(t, inviter.Id, reward.InviterId)
+	}
+
+	stripeRewards, total, err := GetAffiliateRewards(AffiliateRewardQuery{PaymentProvider: PaymentProviderStripe}, pageInfo)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, total)
+	require.Len(t, stripeRewards, 2)
+
+	subscriptionRewards, total, err := GetAffiliateRewards(AffiliateRewardQuery{SourceType: AffiliateRewardSourceSubscription}, pageInfo)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, total)
+	require.Len(t, subscriptionRewards, 1)
+	assert.Equal(t, AffiliateRewardTriggerSubscription, subscriptionRewards[0].TriggerType)
+
+	keywordRewards, total, err := GetAffiliateRewards(AffiliateRewardQuery{Keyword: fmt.Sprintf("%d", inviteeTwo.Id)}, pageInfo)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, total)
+	require.Len(t, keywordRewards, 2)
+
+	windowRewards, total, err := GetAffiliateRewards(AffiliateRewardQuery{
+		InviterId: inviter.Id,
+		StartTime: now - 95,
+		EndTime:   now - 75,
+	}, pageInfo)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, total)
+	require.Len(t, windowRewards, 2)
+
+	summary, err := GetAffiliateRewardSummary(AffiliateRewardQuery{InviterId: inviter.Id})
+	require.NoError(t, err)
+	assert.EqualValues(t, 600, summary.TotalRewardQuota)
+	assert.EqualValues(t, 100, summary.PendingRewardQuota)
+	assert.EqualValues(t, 150, summary.AvailableRewardQuota)
+	assert.EqualValues(t, 350, summary.TransferredRewardQuota)
+	assert.EqualValues(t, 400, summary.VoidedRewardQuota)
+	assert.EqualValues(t, 2, summary.EffectiveInviteeCount)
+	assert.EqualValues(t, 4, summary.TotalRecords)
 }
 
 func TestTransferAffiliateRewardAllowsLegacyInviteBalanceRemainder(t *testing.T) {
@@ -413,6 +689,11 @@ func TestManualCompleteTopUpAppliesAffiliateRewardOnce(t *testing.T) {
 	assert.Equal(t, 200, reloadedInvitee.Quota)
 	assert.Equal(t, 20, reloadedInviter.AffQuota)
 	assert.EqualValues(t, 1, getAffiliateRewardLogCountForTest(t))
+	var reward AffiliateRewardLog
+	require.NoError(t, DB.Where("trade_no = ?", "admin-topup-order").First(&reward).Error)
+	assert.Equal(t, AffiliateRewardSourceTopup, reward.SourceType)
+	assert.Equal(t, PaymentProviderEpay, reward.PaymentProvider)
+	assert.Equal(t, AffiliateRewardTriggerRecurringTopup, reward.TriggerType)
 }
 
 func TestCompleteSubscriptionOrderRespectsAffiliateIncludeSwitch(t *testing.T) {

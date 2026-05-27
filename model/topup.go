@@ -429,7 +429,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
 			return err
 		}
-		if err := ApplyAffiliateRewardForTopUpTx(tx, topUp, quotaToAdd, "admin", false); err != nil {
+		if err := ApplyAffiliateRewardForTopUpTx(tx, topUp, quotaToAdd, topUp.PaymentProvider, false); err != nil {
 			return err
 		}
 
