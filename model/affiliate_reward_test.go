@@ -348,6 +348,57 @@ func TestCreateAffiliateRewardDuplicateRewardKeyIsIdempotent(t *testing.T) {
 	assert.Equal(t, 100, reloadedInviter.AffHistoryQuota)
 }
 
+func TestFirstRewardConflictFallsBackToRecurringForDifferentTrade(t *testing.T) {
+	truncateTables(t)
+	configureAffiliateRewardTest(t, func(setting *operation_setting.AffiliateSetting) {
+		setting.FirstRewardEnabled = true
+		setting.FirstRewardRate = 0.5
+		setting.RecurringRewardEnabled = true
+		setting.RecurringRewardRate = 0.1
+	})
+
+	now := common.GetTimestamp()
+	inviter := insertAffiliateUserForTest(t, 1233, "inviter_first_conflict", 0, now)
+	invitee := insertAffiliateUserForTest(t, 1234, "invitee_first_conflict", inviter.Id, now)
+	topup := insertAffiliateTopUpForTest(t, "first-conflict-current", invitee.Id, 10, 10, PaymentProviderEpay)
+	markAffiliateTopUpSuccessForTest(t, topup, now)
+	insertAffiliateRewardLogForTest(t, AffiliateRewardLog{
+		RewardKey:       fmt.Sprintf("first:%d", invitee.Id),
+		InviterId:       inviter.Id,
+		InviteeId:       invitee.Id,
+		TradeNo:         "first-conflict-other",
+		TriggerType:     AffiliateRewardTriggerFirstTopup,
+		SourceType:      AffiliateRewardSourceTopup,
+		PaymentProvider: PaymentProviderEpay,
+		BasisQuota:      1000,
+		BasisMoney:      10,
+		RewardRate:      0.5,
+		RewardQuota:     500,
+		Status:          AffiliateRewardStatusAvailable,
+		EligibleAt:      now,
+		SettledAt:       now,
+	})
+
+	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+		return ApplyAffiliateRewardOnTopUpSuccess(tx, AffiliateRewardTopUpEvent{
+			InviteeId:     invitee.Id,
+			TopupId:       topup.Id,
+			TradeNo:       topup.TradeNo,
+			BasisQuota:    1000,
+			BasisMoney:    topup.Money,
+			TriggerSource: PaymentProviderEpay,
+			CompletedAt:   topup.CompleteTime,
+		})
+	}))
+
+	assert.EqualValues(t, 2, getAffiliateRewardLogCountForTest(t))
+	var reward AffiliateRewardLog
+	require.NoError(t, DB.Where("trade_no = ?", topup.TradeNo).First(&reward).Error)
+	assert.Equal(t, AffiliateRewardTriggerRecurringTopup, reward.TriggerType)
+	assert.Equal(t, "recurring:"+topup.TradeNo, reward.RewardKey)
+	assert.Equal(t, 100, reward.RewardQuota)
+}
+
 func TestTransferAffiliateRewardPartiallyConsumesLedger(t *testing.T) {
 	truncateTables(t)
 	configureAffiliateRewardTest(t, nil)
@@ -831,6 +882,47 @@ func TestCompleteSubscriptionOrderRespectsAffiliateIncludeSwitch(t *testing.T) {
 	assert.Equal(t, AffiliateRewardTriggerSubscription, reward.TriggerType)
 	assert.Equal(t, 999, reward.BasisQuota)
 	assert.Equal(t, 99, reward.RewardQuota)
+}
+
+func TestExcludedSubscriptionDoesNotConsumeFirstTopupRewardEligibility(t *testing.T) {
+	truncateTables(t)
+	configureAffiliateRewardTest(t, func(setting *operation_setting.AffiliateSetting) {
+		setting.FirstRewardEnabled = true
+		setting.FirstRewardRate = 0.5
+		setting.RecurringRewardEnabled = true
+		setting.RecurringRewardRate = 0.1
+		setting.IncludeSubscriptionOrders = false
+	})
+
+	now := common.GetTimestamp()
+	inviter := insertAffiliateUserForTest(t, 1411, "inviter_excluded_subscription", 0, now)
+	invitee := insertAffiliateUserForTest(t, 1412, "invitee_excluded_subscription", inviter.Id, now)
+	plan := insertSubscriptionPlanForPaymentGuardTest(t, 1413)
+	insertSubscriptionOrderForPaymentGuardTest(t, "excluded-subscription-first", invitee.Id, plan.Id, PaymentProviderStripe)
+	require.NoError(t, CompleteSubscriptionOrder("excluded-subscription-first", `{"provider":"stripe"}`, PaymentProviderStripe, ""))
+	assert.EqualValues(t, 0, getAffiliateRewardLogCountForTest(t))
+	subscriptionTopup := GetTopUpByTradeNo("excluded-subscription-first")
+	require.NotNil(t, subscriptionTopup)
+
+	topup := insertAffiliateTopUpForTest(t, "topup-after-excluded-subscription", invitee.Id, 10, 10, PaymentProviderEpay)
+	markAffiliateTopUpSuccessForTest(t, topup, subscriptionTopup.CompleteTime+10)
+	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+		return ApplyAffiliateRewardOnTopUpSuccess(tx, AffiliateRewardTopUpEvent{
+			InviteeId:     invitee.Id,
+			TopupId:       topup.Id,
+			TradeNo:       topup.TradeNo,
+			BasisQuota:    1000,
+			BasisMoney:    topup.Money,
+			TriggerSource: PaymentProviderEpay,
+			CompletedAt:   topup.CompleteTime,
+		})
+	}))
+
+	var reward AffiliateRewardLog
+	require.NoError(t, DB.Where("trade_no = ?", topup.TradeNo).First(&reward).Error)
+	assert.Equal(t, AffiliateRewardTriggerFirstTopup, reward.TriggerType)
+	assert.Equal(t, fmt.Sprintf("first:%d", invitee.Id), reward.RewardKey)
+	assert.Equal(t, 500, reward.RewardQuota)
 }
 
 func TestAffiliateRewardRequiresPaymentCompliance(t *testing.T) {

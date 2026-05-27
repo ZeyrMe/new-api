@@ -133,7 +133,7 @@ func ApplyAffiliateRewardOnTopUpSuccess(tx *gorm.DB, event AffiliateRewardTopUpE
 		return nil
 	}
 
-	isFirstSuccessfulOrder, err := isFirstSuccessfulAffiliateOrderTx(tx, event)
+	isFirstSuccessfulOrder, err := isFirstSuccessfulAffiliateOrderTx(tx, event, setting.IncludeSubscriptionOrders)
 	if err != nil {
 		return err
 	}
@@ -144,16 +144,26 @@ func ApplyAffiliateRewardOnTopUpSuccess(tx *gorm.DB, event AffiliateRewardTopUpE
 	firstKey := fmt.Sprintf("first:%d", invitee.Id)
 	if isFirstSuccessfulOrder && setting.FirstRewardEnabled && setting.FirstRewardRate > 0 &&
 		isWithinAffiliateRewardWindow(invitee.CreatedAt, event.CompletedAt, setting.AttributionWindowDays) {
-		var firstRewardCount int64
-		if err := tx.Model(&AffiliateRewardLog{}).Where("reward_key = ?", firstKey).Count(&firstRewardCount).Error; err != nil {
+		created, err := createAffiliateRewardTxWithResult(tx, invitee.InviterId, invitee.Id, event, AffiliateRewardTriggerFirstTopup, firstKey, setting.FirstRewardRate, setting.FirstRewardCapQuota)
+		if err != nil {
 			return err
 		}
-		if firstRewardCount > 0 {
+		if created {
 			return nil
 		}
-		return createAffiliateRewardTx(tx, invitee.InviterId, invitee.Id, event, AffiliateRewardTriggerFirstTopup, firstKey, setting.FirstRewardRate, setting.FirstRewardCapQuota)
+		sameTrade, err := affiliateRewardKeyBelongsToTradeTx(tx, firstKey, event.TradeNo)
+		if err != nil {
+			return err
+		}
+		if sameTrade {
+			return nil
+		}
 	}
 
+	return applyRecurringAffiliateRewardTx(tx, invitee, event, setting)
+}
+
+func applyRecurringAffiliateRewardTx(tx *gorm.DB, invitee User, event AffiliateRewardTopUpEvent, setting *operation_setting.AffiliateSetting) error {
 	if !setting.RecurringRewardEnabled {
 		return nil
 	}
@@ -197,7 +207,8 @@ func ApplyAffiliateRewardOnTopUpSuccess(tx *gorm.DB, event AffiliateRewardTopUpE
 	if event.IncludeSubscription {
 		triggerType = AffiliateRewardTriggerSubscription
 	}
-	return createAffiliateRewardTx(tx, invitee.InviterId, invitee.Id, event, triggerType, rewardKey, setting.RecurringRewardRate, capQuota)
+	_, err := createAffiliateRewardTxWithResult(tx, invitee.InviterId, invitee.Id, event, triggerType, rewardKey, setting.RecurringRewardRate, capQuota)
+	return err
 }
 
 func isWithinAffiliateRewardWindow(inviteeCreatedAt int64, completedAt int64, windowDays int) bool {
@@ -220,12 +231,15 @@ func ApplyAffiliateRewardForTopUpTx(tx *gorm.DB, topUp *TopUp, basisQuota int, t
 	})
 }
 
-func isFirstSuccessfulAffiliateOrderTx(tx *gorm.DB, event AffiliateRewardTopUpEvent) (bool, error) {
+func isFirstSuccessfulAffiliateOrderTx(tx *gorm.DB, event AffiliateRewardTopUpEvent, includeSubscriptionOrders bool) (bool, error) {
 	var first TopUp
-	err := tx.Select("id", "trade_no", "complete_time").
+	query := tx.Select("id", "trade_no", "complete_time").
 		Where("user_id = ? AND status = ? AND money > 0", event.InviteeId, common.TopUpStatusSuccess).
-		Order("complete_time asc, id asc").
-		First(&first).Error
+		Order("complete_time asc, id asc")
+	if !includeSubscriptionOrders {
+		query = query.Where("NOT EXISTS (SELECT 1 FROM subscription_orders WHERE subscription_orders.trade_no = top_ups.trade_no)")
+	}
+	err := query.First(&first).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return true, nil
 	}
@@ -236,8 +250,13 @@ func isFirstSuccessfulAffiliateOrderTx(tx *gorm.DB, event AffiliateRewardTopUpEv
 }
 
 func createAffiliateRewardTx(tx *gorm.DB, inviterId int, inviteeId int, event AffiliateRewardTopUpEvent, triggerType string, rewardKey string, rate float64, capQuota int) error {
+	_, err := createAffiliateRewardTxWithResult(tx, inviterId, inviteeId, event, triggerType, rewardKey, rate, capQuota)
+	return err
+}
+
+func createAffiliateRewardTxWithResult(tx *gorm.DB, inviterId int, inviteeId int, event AffiliateRewardTopUpEvent, triggerType string, rewardKey string, rate float64, capQuota int) (bool, error) {
 	if rate <= 0 {
-		return nil
+		return false, nil
 	}
 	rewardQuota := int(decimal.NewFromInt(int64(event.BasisQuota)).
 		Mul(decimal.NewFromFloat(rate)).
@@ -247,7 +266,7 @@ func createAffiliateRewardTx(tx *gorm.DB, inviterId int, inviteeId int, event Af
 		rewardQuota = capQuota
 	}
 	if rewardQuota <= 0 {
-		return nil
+		return false, nil
 	}
 
 	setting := operation_setting.GetAffiliateSetting()
@@ -292,10 +311,10 @@ func createAffiliateRewardTx(tx *gorm.DB, inviterId int, inviteeId int, event Af
 		DoNothing: true,
 	}).Create(log)
 	if result.Error != nil {
-		return result.Error
+		return false, result.Error
 	}
 	if result.RowsAffected == 0 {
-		return nil
+		return false, nil
 	}
 
 	updates := map[string]interface{}{
@@ -305,11 +324,23 @@ func createAffiliateRewardTx(tx *gorm.DB, inviterId int, inviteeId int, event Af
 		updates["aff_quota"] = gorm.Expr("aff_quota + ?", rewardQuota)
 	}
 	if err := tx.Model(&User{}).Where("id = ?", inviterId).Updates(updates).Error; err != nil {
-		return err
+		return false, err
 	}
 	common.SysLog(fmt.Sprintf("affiliate reward created inviter=%d invitee=%d trade_no=%s reward=%s status=%s",
 		inviterId, inviteeId, event.TradeNo, logger.FormatQuota(rewardQuota), status))
-	return nil
+	return true, nil
+}
+
+func affiliateRewardKeyBelongsToTradeTx(tx *gorm.DB, rewardKey string, tradeNo string) (bool, error) {
+	var existing AffiliateRewardLog
+	err := tx.Select("trade_no").Where("reward_key = ?", rewardKey).First(&existing).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return existing.TradeNo == tradeNo, nil
 }
 
 func SettleAvailableAffiliateRewards(userId int) (int, error) {
