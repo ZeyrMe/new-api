@@ -558,7 +558,7 @@ func VoidAffiliateReward(rewardId int, reason string) (*AffiliateRewardLog, erro
 		return nil, err
 	}
 	if voidedNow {
-		common.SysLog(fmt.Sprintf("affiliate reward voided reward_id=%d inviter=%d invitee=%d reward=%s transferred=%s reason=%q status=%s",
+		common.SysLog(fmt.Sprintf("affiliate reward voided reward_id=%d inviter=%d invitee=%d reward=%s transferred=%s reason=%q result=success status=%s",
 			reward.Id, reward.InviterId, reward.InviteeId, logger.FormatQuota(reward.RewardQuota),
 			logger.FormatQuota(reward.TransferredQuota), reason, reward.Status))
 		RecordLog(reward.InviterId, LogTypeSystem, fmt.Sprintf("邀请返利已作废，奖励ID：%d，返利：%s，已转出：%s，原因：%s",

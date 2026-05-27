@@ -288,22 +288,36 @@ func TestGetAdminAffiliateRewardsFiltersAndSummarizes(t *testing.T) {
 }
 
 func TestGetAdminAffiliateRewardsRejectsInvalidFilter(t *testing.T) {
-	setupModelListControllerTestDB(t)
-
-	recorder := httptest.NewRecorder()
-	context, _ := gin.CreateTestContext(recorder)
-	context.Request = httptest.NewRequest(http.MethodGet, "/api/user/aff_rewards/admin?status=unknown", nil)
-
-	GetAdminAffiliateRewards(context)
-
-	require.Equal(t, http.StatusOK, recorder.Code)
-	var payload struct {
-		Success bool   `json:"success"`
-		Message string `json:"message"`
+	tests := []struct {
+		name      string
+		query     string
+		fieldName string
+	}{
+		{name: "status", query: "status=unknown", fieldName: "status"},
+		{name: "trigger type", query: "trigger_type=unknown", fieldName: "trigger_type"},
+		{name: "source type", query: "source_type=unknown", fieldName: "source_type"},
+		{name: "payment provider", query: "payment_provider=unknown", fieldName: "payment_provider"},
 	}
-	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
-	assert.False(t, payload.Success)
-	assert.Contains(t, payload.Message, "status")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupModelListControllerTestDB(t)
+
+			recorder := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(recorder)
+			context.Request = httptest.NewRequest(http.MethodGet, "/api/user/aff_rewards/admin?"+tt.query, nil)
+
+			GetAdminAffiliateRewards(context)
+
+			require.Equal(t, http.StatusOK, recorder.Code)
+			var payload struct {
+				Success bool   `json:"success"`
+				Message string `json:"message"`
+			}
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+			assert.False(t, payload.Success)
+			assert.Contains(t, payload.Message, tt.fieldName)
+		})
+	}
 }
 
 func TestGetAdminAffiliateRewardsSettlesDuePendingRewards(t *testing.T) {

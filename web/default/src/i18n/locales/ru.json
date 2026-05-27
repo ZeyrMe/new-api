@@ -1764,6 +1764,7 @@
     "First API request": "Первый API-запрос",
     "First reward cap quota": "Лимит первого вознаграждения",
     "First reward rate": "Ставка первого вознаграждения",
+    "First reward window days": "Окно первого вознаграждения в днях",
     "First top-up": "Первое пополнение",
     "First top-up rewards": "Вознаграждения за первое пополнение",
     "First top-up rewards only apply within this many days after registration. Use 0 for no limit.": "Вознаграждения за первое пополнение применяются только в течение указанного числа дней после регистрации. 0 означает без ограничения.",

@@ -1764,6 +1764,7 @@
     "First API request": "首个 API 请求",
     "First reward cap quota": "首充返利封顶额度",
     "First reward rate": "首充返利比例",
+    "First reward window days": "首充返利窗口天数",
     "First top-up": "首次充值",
     "First top-up rewards": "首充返利",
     "First top-up rewards only apply within this many days after registration. Use 0 for no limit.": "首充返利仅在注册后的这些天数内生效。填 0 表示不限制。",

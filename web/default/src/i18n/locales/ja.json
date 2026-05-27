@@ -1764,6 +1764,7 @@
     "First API request": "最初の API リクエスト",
     "First reward cap quota": "初回報酬の上限クォータ",
     "First reward rate": "初回報酬率",
+    "First reward window days": "初回報酬期間（日）",
     "First top-up": "初回チャージ",
     "First top-up rewards": "初回チャージ報酬",
     "First top-up rewards only apply within this many days after registration. Use 0 for no limit.": "初回チャージ報酬は登録後この日数内のみ適用されます。0 は無制限です。",

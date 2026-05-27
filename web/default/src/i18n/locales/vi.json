@@ -1764,6 +1764,7 @@
     "First API request": "Yêu cầu API đầu tiên",
     "First reward cap quota": "Giới hạn thưởng lần nạp đầu",
     "First reward rate": "Tỷ lệ thưởng lần nạp đầu",
+    "First reward window days": "Số ngày cửa sổ thưởng lần đầu",
     "First top-up": "Lần nạp đầu",
     "First top-up rewards": "Thưởng lần nạp đầu",
     "First top-up rewards only apply within this many days after registration. Use 0 for no limit.": "Thưởng lần nạp đầu chỉ áp dụng trong số ngày này sau khi đăng ký. Dùng 0 nếu không giới hạn.",

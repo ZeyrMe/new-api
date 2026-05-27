@@ -537,7 +537,7 @@ func VoidAffiliateReward(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.SysLog(fmt.Sprintf("affiliate reward voided by admin admin_id=%d reward_id=%d inviter=%d invitee=%d reward=%s transferred=%s reason=%q",
+	common.SysLog(fmt.Sprintf("affiliate reward voided by admin admin_id=%d reward_id=%d inviter=%d invitee=%d reward=%s transferred=%s reason=%q result=success",
 		c.GetInt("id"), reward.Id, reward.InviterId, reward.InviteeId,
 		logger.FormatQuota(reward.RewardQuota), logger.FormatQuota(reward.TransferredQuota), reason))
 	common.ApiSuccess(c, reward)

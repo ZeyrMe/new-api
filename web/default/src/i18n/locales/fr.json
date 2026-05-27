@@ -1764,6 +1764,7 @@
     "First API request": "Première requête API",
     "First reward cap quota": "Plafond de la première récompense",
     "First reward rate": "Taux de première récompense",
+    "First reward window days": "Fenêtre de la première récompense en jours",
     "First top-up": "Premier rechargement",
     "First top-up rewards": "Récompenses du premier rechargement",
     "First top-up rewards only apply within this many days after registration. Use 0 for no limit.": "Les récompenses du premier rechargement ne s’appliquent que pendant ce nombre de jours après l’inscription. Utilisez 0 pour aucune limite.",
