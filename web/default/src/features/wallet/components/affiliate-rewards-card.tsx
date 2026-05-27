@@ -72,7 +72,7 @@ export function AffiliateRewardsCard({
           </div>
           <div className='min-w-0'>
             <h3 className='truncate text-sm font-semibold'>
-              {t('Referral Program')}
+              {t('Referral Rewards')}
             </h3>
             <p className='text-muted-foreground line-clamp-1 text-xs'>
               {t(

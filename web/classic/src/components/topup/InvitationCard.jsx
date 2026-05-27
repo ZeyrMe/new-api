@@ -67,7 +67,7 @@ const rewardStatusConfig = {
 
 const triggerLabels = {
   first_topup: '首次充值',
-  recurring_topup: '长期充值',
+  recurring_topup: '后续充值',
   subscription_order: '订阅订单',
 };
 
@@ -425,7 +425,7 @@ function AffiliateRewardLedgerModal({
           optionList={[
             { value: 'all', label: t('全部触发') },
             { value: 'first_topup', label: t('首次充值') },
-            { value: 'recurring_topup', label: t('长期充值') },
+            { value: 'recurring_topup', label: t('后续充值') },
             { value: 'subscription_order', label: t('订阅订单') },
           ]}
         />

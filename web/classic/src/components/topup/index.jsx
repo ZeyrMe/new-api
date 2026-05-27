@@ -741,7 +741,7 @@ const TopUp = () => {
       return;
     }
     if (transferAmount > availableQuota) {
-      showError(t('划转金额不能超过可用邀请额度'));
+      showError(t('划转金额不能超过可用返利额度'));
       return;
     }
     const res = await API.post(`/api/user/aff_transfer`, {
