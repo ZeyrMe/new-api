@@ -49,7 +49,6 @@ export function useAffiliateRewards(options: UseAffiliateRewardsOptions = {}) {
     initialPageSize = 10,
     enabled = true,
     admin = false,
-    onChanged,
   } = options
   const [records, setRecords] = useState<AffiliateRewardRecord[]>([])
   const [total, setTotal] = useState(0)
@@ -95,12 +94,6 @@ export function useAffiliateRewards(options: UseAffiliateRewardsOptions = {}) {
         setRecords(response.data.items || [])
         setTotal(response.data.total || 0)
         setSummary(response.data.summary || null)
-        try {
-          await onChanged?.()
-        } catch (error) {
-          // eslint-disable-next-line no-console
-          console.error('Failed to sync affiliate wallet data:', error)
-        }
       } else {
         toast.error(
           response.message || i18next.t('Failed to load reward history')
@@ -124,7 +117,6 @@ export function useAffiliateRewards(options: UseAffiliateRewardsOptions = {}) {
     enabled,
     endTime,
     keyword,
-    onChanged,
     page,
     pageSize,
     paymentProvider,

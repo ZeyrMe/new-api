@@ -294,7 +294,7 @@ export function AffiliateRewardHistoryDialog({
     handlePaymentProviderChange,
     handleTimeRangeChange,
     handleVoidReward,
-  } = useAffiliateRewards({ enabled: open, admin: isAdmin, onChanged })
+  } = useAffiliateRewards({ enabled: open, admin: isAdmin })
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const handleDialogOpenChange = useCallback(
@@ -313,6 +313,7 @@ export function AffiliateRewardHistoryDialog({
     if (success) {
       setVoidTarget(null)
       setVoidReason('')
+      await onChanged?.()
     }
   }
 

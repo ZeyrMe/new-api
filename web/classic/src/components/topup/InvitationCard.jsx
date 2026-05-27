@@ -155,7 +155,6 @@ function AffiliateRewardLedgerModal({
           setRecords(data.items || []);
           setTotal(data.total || 0);
           setSummary(data.summary || null);
-          await onChanged?.();
         } else {
           showError(message || t('加载失败'));
         }
@@ -167,7 +166,6 @@ function AffiliateRewardLedgerModal({
     },
     [
       keyword,
-      onChanged,
       page,
       pageSize,
       paymentProvider,
