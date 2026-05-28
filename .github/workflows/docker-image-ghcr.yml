@@ -1,0 +1,80 @@
+name: Publish Docker image (GHCR manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to publish, e.g. aff-rewards-beta-09af45f5"
+        required: true
+        type: string
+      ref:
+        description: "Git ref to build"
+        required: false
+        default: "main"
+        type: string
+      platforms:
+        description: "Target platforms"
+        required: false
+        default: "linux/amd64"
+        type: string
+
+jobs:
+  build:
+    name: Build and push GHCR image
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set version
+        run: echo "${{ inputs.tag }}" > VERSION
+
+      - name: Normalize GHCR repository
+        run: echo "GHCR_REPOSITORY=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Set up QEMU
+        if: contains(inputs.platforms, 'arm64') || contains(inputs.platforms, 'arm/v')
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ env.GHCR_REPOSITORY }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ inputs.platforms }}
+          push: true
+          tags: ghcr.io/${{ env.GHCR_REPOSITORY }}:${{ inputs.tag }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+          sbom: false
+
+      - name: Image summary
+        run: |
+          echo "### GHCR image" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "ghcr.io/${GHCR_REPOSITORY}:${{ inputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
