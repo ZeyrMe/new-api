@@ -399,6 +399,39 @@ func TestFirstRewardConflictFallsBackToRecurringForDifferentTrade(t *testing.T) 
 	assert.Equal(t, 100, reward.RewardQuota)
 }
 
+func TestZeroFirstRewardDoesNotFallbackToRecurring(t *testing.T) {
+	truncateTables(t)
+	configureAffiliateRewardTest(t, func(setting *operation_setting.AffiliateSetting) {
+		setting.FirstRewardEnabled = true
+		setting.FirstRewardRate = 0.0001
+		setting.RecurringRewardEnabled = true
+		setting.RecurringRewardRate = 0.5
+	})
+
+	now := common.GetTimestamp()
+	inviter := insertAffiliateUserForTest(t, 1235, "inviter_zero_first", 0, now)
+	invitee := insertAffiliateUserForTest(t, 1236, "invitee_zero_first", inviter.Id, now)
+	topup := insertAffiliateTopUpForTest(t, "zero-first-no-recurring", invitee.Id, 10, 10, PaymentProviderEpay)
+	markAffiliateTopUpSuccessForTest(t, topup, now)
+
+	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+		return ApplyAffiliateRewardOnTopUpSuccess(tx, AffiliateRewardTopUpEvent{
+			InviteeId:     invitee.Id,
+			TopupId:       topup.Id,
+			TradeNo:       topup.TradeNo,
+			BasisQuota:    1000,
+			BasisMoney:    topup.Money,
+			TriggerSource: PaymentProviderEpay,
+			CompletedAt:   topup.CompleteTime,
+		})
+	}))
+
+	assert.EqualValues(t, 0, getAffiliateRewardLogCountForTest(t))
+	reloadedInviter := getAffiliateUserForTest(t, inviter.Id)
+	assert.Equal(t, 0, reloadedInviter.AffQuota)
+	assert.Equal(t, 0, reloadedInviter.AffHistoryQuota)
+}
+
 func TestTransferAffiliateRewardPartiallyConsumesLedger(t *testing.T) {
 	truncateTables(t)
 	configureAffiliateRewardTest(t, nil)
